@@ -1,0 +1,481 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+//////////////////////////////////////////////////////
+// ENUMS
+//////////////////////////////////////////////////////
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum TicketType {
+  BUG
+  FEATURE
+  SUPPORT
+  IMPROVEMENT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  LEAVE
+  WFH
+}
+
+enum LeaveType {
+  SICK
+  CASUAL
+  VACATION
+  UNPAID
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ChannelType {
+  COMPANY
+  PROJECT
+}
+
+//////////////////////////////////////////////////////
+// AUTH & RBAC
+//////////////////////////////////////////////////////
+
+model User {
+  id            String      @id @default(uuid())
+  email         String      @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  designation   String?
+  department    String?
+  profilePhoto  String?
+  joinedAt      DateTime?
+  status        UserStatus  @default(ACTIVE)
+  lastLoginAt   DateTime?
+  tokenVersion  Int         @default(0)
+
+  roles         UserRole[]
+
+  // Project relations
+  createdProjects Project[] @relation("ProjectCreator")
+  ledProjects     Project[] @relation("ProjectLead")
+  projectMembers  ProjectMember[]
+
+  // Task relations
+  assignedTasks   Task[]    @relation("TaskAssignee")
+  createdTasks    Task[]    @relation("TaskCreator")
+  changedTaskStatuses TaskStatusHistory[] @relation("TaskStatusChanger")
+
+  // Ticket relations
+  reportedTickets Ticket[]  @relation("TicketReporter")
+  assignedTickets Ticket[]  @relation("TicketAssignee")
+
+  // Time logs
+  timeLogs        TimeLog[] @relation("TimeLogUser")
+  approvedTimeLogs TimeLog[] @relation("TimeLogApprover")
+
+  // Self work
+  selfWorks       SelfWork[] @relation("SelfWorkOwner")
+  approvedSelfWorks SelfWork[] @relation("SelfWorkApprover")
+
+  // Leave
+  leaveRequests   LeaveRequest[] @relation("LeaveRequester")
+  approvedLeaves  LeaveRequest[] @relation("LeaveApprover")
+
+  attendance      Attendance[]
+
+  // System
+  notifications   Notification[]
+  messages        Message[]
+  activityFeed    ActivityFeed[]
+  auditLogs       AuditLog[]
+  uploadedFiles   FileAttachment[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  module      String
+  description String?
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+//////////////////////////////////////////////////////
+// PROJECTS
+//////////////////////////////////////////////////////
+
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(PLANNING)
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      Float?
+  createdById String
+  leadId      String?
+
+  createdBy   User   @relation("ProjectCreator", fields: [createdById], references: [id])
+  lead        User?  @relation("ProjectLead", fields: [leadId], references: [id])
+
+  members     ProjectMember[]
+  tasks       Task[]
+  tickets     Ticket[]
+  timeLogs    TimeLog[]
+  selfWorks   SelfWork[]
+  finance     ProjectFinance?
+  channels    Channel[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+}
+
+model ProjectMember {
+  projectId     String
+  userId        String
+  roleInProject String?
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+}
+
+//////////////////////////////////////////////////////
+// TASKS
+//////////////////////////////////////////////////////
+
+model Task {
+  id            String      @id @default(uuid())
+  projectId     String
+  title         String
+  description   String?
+  priority      Priority    @default(MEDIUM)
+  status        TaskStatus  @default(TODO)
+  assignedToId  String?
+  createdById   String
+  dueDate       DateTime?
+  estimatedHrs  Float?
+  actualHrs     Float?
+  completedAt   DateTime?
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee      User?   @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  creator       User    @relation("TaskCreator", fields: [createdById], references: [id])
+
+  statusHistory TaskStatusHistory[]
+  timeLogs      TimeLog[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([assignedToId])
+  @@index([status])
+}
+
+model TaskStatusHistory {
+  id          String     @id @default(uuid())
+  taskId      String
+  oldStatus   TaskStatus
+  newStatus   TaskStatus
+  changedById String
+
+  task        Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  changedBy   User @relation("TaskStatusChanger", fields: [changedById], references: [id])
+
+  changedAt   DateTime @default(now())
+}
+
+//////////////////////////////////////////////////////
+// TICKETS
+//////////////////////////////////////////////////////
+
+model Ticket {
+  id            String       @id @default(uuid())
+  projectId     String?
+  title         String
+  description   String
+  type          TicketType
+  priority      Priority
+  status        TicketStatus @default(OPEN)
+  reporterId    String
+  assignedToId  String?
+  slaDueAt      DateTime?
+  escalated     Boolean      @default(false)
+  resolution    String?
+  resolvedAt    DateTime?
+
+  project       Project? @relation(fields: [projectId], references: [id])
+  reporter      User     @relation("TicketReporter", fields: [reporterId], references: [id])
+  assignee      User?    @relation("TicketAssignee", fields: [assignedToId], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+}
+
+//////////////////////////////////////////////////////
+// TIME LOGS
+//////////////////////////////////////////////////////
+
+model TimeLog {
+  id            String         @id @default(uuid())
+  userId        String
+  projectId     String
+  taskId        String?
+  description   String
+  hours         Float
+  logDate       DateTime       @db.Date
+  status        ApprovalStatus @default(PENDING)
+  approvedById  String?
+  approvedAt    DateTime?
+
+  user          User    @relation("TimeLogUser", fields: [userId], references: [id], onDelete: Cascade)
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task          Task?   @relation(fields: [taskId], references: [id])
+  approvedBy    User?   @relation("TimeLogApprover", fields: [approvedById], references: [id])
+
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([status])
+}
+
+//////////////////////////////////////////////////////
+// SELF WORK
+//////////////////////////////////////////////////////
+
+model SelfWork {
+  id            String         @id @default(uuid())
+  projectId     String
+  userId        String
+  title         String
+  description   String
+  estimatedHours Float
+  status        ApprovalStatus @default(PENDING)
+  approvedById  String?
+  approvedAt    DateTime?
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User    @relation("SelfWorkOwner", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy    User?   @relation("SelfWorkApprover", fields: [approvedById], references: [id])
+
+  createdAt     DateTime @default(now())
+}
+
+//////////////////////////////////////////////////////
+// ATTENDANCE & LEAVE
+//////////////////////////////////////////////////////
+
+model Attendance {
+  id        String           @id @default(uuid())
+  userId    String
+  date      DateTime         @db.Date
+  checkIn   DateTime?
+  checkOut  DateTime?
+  latitude  Float?
+  longitude Float?
+  status    AttendanceStatus @default(PRESENT)
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+}
+
+model LeaveRequest {
+  id           String         @id @default(uuid())
+  userId       String
+  type         LeaveType
+  startDate    DateTime       @db.Date
+  endDate      DateTime       @db.Date
+  reason       String
+  status       ApprovalStatus @default(PENDING)
+  approvedById String?
+  approvedAt   DateTime?
+
+  user         User  @relation("LeaveRequester", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy   User? @relation("LeaveApprover", fields: [approvedById], references: [id])
+
+  createdAt    DateTime @default(now())
+}
+
+//////////////////////////////////////////////////////
+// FINANCE
+//////////////////////////////////////////////////////
+
+model ProjectFinance {
+  id           String  @id @default(uuid())
+  projectId    String  @unique
+  totalIncome  Float   @default(0)
+  totalExpense Float   @default(0)
+
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+//////////////////////////////////////////////////////
+// CHAT
+//////////////////////////////////////////////////////
+
+model Channel {
+  id        String      @id @default(uuid())
+  type      ChannelType
+  projectId String?
+
+  project   Project? @relation(fields: [projectId], references: [id])
+  messages  Message[]
+
+  createdAt DateTime @default(now())
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  channelId String
+  senderId  String
+  content   String
+  fileUrl   String?
+
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender    User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+//////////////////////////////////////////////////////
+// SYSTEM
+//////////////////////////////////////////////////////
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  message   String
+  isRead    Boolean  @default(false)
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model ActivityFeed {
+  id        String   @id @default(uuid())
+  userId    String
+  entity    String
+  entityId  String
+  message   String
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String
+  action    String
+  module    String
+  entityId  String?
+  ipAddress String?
+
+  actor     User @relation(fields: [actorId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model FileAttachment {
+  id           String   @id @default(uuid())
+  entityType   String
+  entityId     String
+  filePath     String
+  uploadedById String
+
+  uploadedBy   User @relation(fields: [uploadedById], references: [id])
+
+  uploadedAt   DateTime @default(now())
+}
