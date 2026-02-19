@@ -18,16 +18,23 @@ import { RolesGuard } from 'src/auth/roles.guard'
 export class UsersController {
   constructor(private usersService: UsersService) {}
 
-  @Post()
-  createUser(
-    @Body()
-    body: {
-      firstName: string
-      lastName: string
-      email: string
-      password: string
-    },
-  ) {
+@Post()
+createUser(
+  @Body()
+  body: {
+    firstName: string
+    lastName: string
+    email: string
+    password: string
+    phone?: string
+    designation?: string
+    department?: string
+    profilePhoto?: string
+    joinedAt?: Date
+    status?: any
+  },
+) {
+
     return this.usersService.createUser(body)
   }
 
@@ -50,4 +57,26 @@ export class UsersController {
   deactivateUser(@Param('id') id: string) {
     return this.usersService.deactivateUser(id)
   }
+
+  @Patch(':id/activate')
+activateUser(@Param('id') id: string) {
+  return this.usersService.activateUser(id)
+}
+
+@Patch(':id')
+updateUser(
+  @Param('id') id: string,
+  @Body()
+  body: {
+    firstName?: string
+    lastName?: string
+    phone?: string
+    department?: string
+    profilePhoto?: string
+  },
+) {
+  return this.usersService.updateUser(id, body)
+}
+
+
 }

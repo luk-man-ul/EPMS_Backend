@@ -101,6 +101,7 @@ model User {
   tokenVersion  Int         @default(0)
 
   roles         UserRole[]
+  skills        UserSkill[]   // 👈 NEW
 
   // Project relations
   createdProjects Project[] @relation("ProjectCreator")
@@ -142,6 +143,31 @@ model User {
 
   @@index([email])
   @@index([status])
+}
+
+//////////////////////////////////////////////////////
+// SKILLS MODULE (NEW)
+//////////////////////////////////////////////////////
+
+model Skill {
+  id        String      @id @default(uuid())
+  name      String      @unique
+  users     UserSkill[]
+
+  createdAt DateTime    @default(now())
+
+  @@index([name])
+}
+
+model UserSkill {
+  userId   String
+  skillId  String
+
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill    Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([userId, skillId])
+  @@index([skillId])
 }
 
 model Role {

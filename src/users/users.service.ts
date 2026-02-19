@@ -9,13 +9,18 @@ export class UsersService {
   ////////////////////////////////////////////////////////////
   // CREATE USER (DEFAULT ROLE: EMPLOYEE)
   ////////////////////////////////////////////////////////////
-
-  async createUser(data: {
+async createUser(data: {
   firstName: string
   lastName: string
   email: string
   password: string
-}) {
+  phone?: string
+  department?: string
+  profilePhoto?: string
+  skillIds?: string[]
+})
+
+ {
   const existing = await this.prisma.user.findUnique({
     where: { email: data.email },
   })
@@ -36,16 +41,29 @@ export class UsersService {
 
   const user = await this.prisma.user.create({
     data: {
-      firstName: data.firstName,
-      lastName: data.lastName,
-      email: data.email,
-      passwordHash: hashedPassword,
-      roles: {
-        create: {
-          roleId: employeeRole.id,
-        },
-      },
+  firstName: data.firstName,
+  lastName: data.lastName,
+  email: data.email,
+  passwordHash: hashedPassword,
+  phone: data.phone,
+  department: data.department,
+  skills: data.skillIds
+  ? {
+      create: data.skillIds.map((skillId) => ({
+        skill: { connect: { id: skillId } },
+      })),
+    }
+  : undefined,
+  profilePhoto: data.profilePhoto,
+  joinedAt: new Date(), // 🔥 automatically current time
+  // status will default to ACTIVE from Prisma schema
+  roles: {
+    create: {
+      roleId: employeeRole.id, // EMPLOYEE by default
     },
+  },
+},
+
     include: {
       roles: {
         include: { role: true },
@@ -66,20 +84,27 @@ export class UsersService {
   async getAllUsers() {
     return this.prisma.user.findMany({
       include: {
-        roles: {
-          include: { role: true },
-        },
-      },
+  roles: {
+    include: { role: true },
+  },
+  skills: {
+    include: {
+      skill: true,
+    },
+  },
+},
+
     })
   }
 
-  ////////////////////////////////////////////////////////////
-  // PROMOTE TO TEAM_LEAD
-  ////////////////////////////////////////////////////////////
 
-  async promoteToTeamLead(userId: string) {
+////////////////////////////////////////////////////////////
+// PROMOTE TO TEAM_LEAD
+////////////////////////////////////////////////////////////
+
+async promoteToTeamLead(userId: string) {
   const teamLeadRole = await this.prisma.role.findUnique({
-    where: { name: 'TEAM_LEAD' },
+    where: { name: 'TEAM_LEAD' }, // ✅ MATCHES DATABASE
   })
 
   if (!teamLeadRole) {
@@ -103,14 +128,13 @@ export class UsersService {
   return { message: 'User promoted to TEAM_LEAD' }
 }
 
+////////////////////////////////////////////////////////////
+// DEMOTE TO EMPLOYEE
+////////////////////////////////////////////////////////////
 
-  ////////////////////////////////////////////////////////////
-  // DEMOTE TO EMPLOYEE (REMOVE TEAM_LEAD ROLE)
-  ////////////////////////////////////////////////////////////
-
-  async demoteToEmployee(userId: string) {
+async demoteToEmployee(userId: string) {
   const teamLeadRole = await this.prisma.role.findUnique({
-    where: { name: 'TEAM_LEAD' },
+    where: { name: 'TEAM_LEAD' }, // ✅ MATCHES DATABASE
   })
 
   if (!teamLeadRole) {
@@ -140,4 +164,55 @@ export class UsersService {
 
     return { message: 'User deactivated' }
   }
+
+///////////////////////////////////////////////////////////////
+// ACTIVATE USER
+//////////////////////////////////////////////////////////////
+  async activateUser(id: string) {
+  return this.prisma.user.update({
+    where: { id },
+    data: {
+      status: 'ACTIVE',
+    },
+  })
+}
+
+////////////////////////////////////////////////////////////
+// UPDATE USER
+////////////////////////////////////////////////////////////
+
+async updateUser(
+  userId: string,
+  data: {
+    firstName?: string
+    lastName?: string
+    phone?: string
+    department?: string
+    profilePhoto?: string
+    skillIds?: string[]
+  },
+) {
+  return this.prisma.user.update({
+    where: { id: userId },
+    data: {
+      firstName: data.firstName,
+      lastName: data.lastName,
+      phone: data.phone,
+      department: data.department,
+      profilePhoto: data.profilePhoto,
+
+      // 🔥 Replace skill set completely
+      skills: data.skillIds
+        ? {
+            deleteMany: {}, // remove all old skills
+            create: data.skillIds.map((skillId) => ({
+              skill: { connect: { id: skillId } },
+            })),
+          }
+        : undefined,
+    },
+  })
+}
+
+
 }
