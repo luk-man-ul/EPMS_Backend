@@ -6,77 +6,88 @@ import {
   Param,
   Body,
   UseGuards,
-} from '@nestjs/common'
-import { UsersService } from './users.service'
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'
-import { Roles } from '../auth/roles.decorator'
-import { RolesGuard } from 'src/auth/roles.guard'
+  Req,
+} from '@nestjs/common';
+import { UsersService } from './users.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
-@UseGuards(JwtAuthGuard,RolesGuard)
-@Roles('ADMIN')
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private usersService: UsersService) {}
 
-@Post()
-createUser(
-  @Body()
-  body: {
-    firstName: string
-    lastName: string
-    email: string
-    password: string
-    phone?: string
-    designation?: string
-    department?: string
-    profilePhoto?: string
-    joinedAt?: Date
-    status?: any
-  },
-) {
+  ////////////////////////////////////////////////////////////
+  // CREATE USER
+  ////////////////////////////////////////////////////////////
 
-    return this.usersService.createUser(body)
+  @Permissions('employees.create')
+  @Post()
+  createUser(@Body() body: any, @Req() req: any) {
+    return this.usersService.createUser(body, req.user);
   }
 
+  ////////////////////////////////////////////////////////////
+  // GET ALL USERS
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.view')
   @Get()
-  getAllUsers() {
-    return this.usersService.getAllUsers()
+  getAllUsers(@Req() req: any) {
+    return this.usersService.getAllUsers(req.user);
   }
 
+  ////////////////////////////////////////////////////////////
+  // PROMOTE
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.update')
   @Patch(':id/promote')
-  promoteToTeamLead(@Param('id') id: string) {
-    return this.usersService.promoteToTeamLead(id)
+  promoteToTeamLead(@Param('id') id: string, @Req() req: any) {
+    return this.usersService.promoteToTeamLead(id, req.user);
   }
 
+  ////////////////////////////////////////////////////////////
+  // DEMOTE
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.update')
   @Patch(':id/demote')
-  demoteToEmployee(@Param('id') id: string) {
-    return this.usersService.demoteToEmployee(id)
+  demoteToEmployee(@Param('id') id: string, @Req() req: any) {
+    return this.usersService.demoteToEmployee(id, req.user);
   }
 
+  ////////////////////////////////////////////////////////////
+  // DEACTIVATE
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.update')
   @Patch(':id/deactivate')
-  deactivateUser(@Param('id') id: string) {
-    return this.usersService.deactivateUser(id)
+  deactivateUser(@Param('id') id: string, @Req() req: any) {
+    return this.usersService.deactivateUser(id, req.user);
   }
 
+  ////////////////////////////////////////////////////////////
+  // ACTIVATE
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.update')
   @Patch(':id/activate')
-activateUser(@Param('id') id: string) {
-  return this.usersService.activateUser(id)
-}
+  activateUser(@Param('id') id: string, @Req() req: any) {
+    return this.usersService.activateUser(id, req.user);
+  }
 
-@Patch(':id')
-updateUser(
-  @Param('id') id: string,
-  @Body()
-  body: {
-    firstName?: string
-    lastName?: string
-    phone?: string
-    department?: string
-    profilePhoto?: string
-  },
-) {
-  return this.usersService.updateUser(id, body)
-}
+  ////////////////////////////////////////////////////////////
+  // UPDATE USER
+  ////////////////////////////////////////////////////////////
 
-
+  @Permissions('employees.update')
+  @Patch(':id')
+  updateUser(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    return this.usersService.updateUser(id, body, req.user);
+  }
 }
