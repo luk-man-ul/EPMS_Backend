@@ -5,19 +5,36 @@ import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { PrismaModule } from './prisma/prisma.module'
 import { AuthModule } from './auth/auth.module'
-import { RolesGuard } from './auth/roles.guard'
-import { UsersModule } from './users/users.module';
-import { SkillsModule } from './skills/skills.module';
-import { ProjectsModule } from './projects/projects.module';
+import { PermissionGuard } from './common/guards/permission.guard'
+import { JwtAuthGuard } from './auth/jwt-auth.guard'
+import { UsersModule } from './users/users.module'
+import { SkillsModule } from './skills/skills.module'
+import { ProjectsModule } from './projects/projects.module'
+import { PermissionsModule } from './permissions/permissions.module'
 
 @Module({
-  imports: [PrismaModule, AuthModule, UsersModule, SkillsModule, ProjectsModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    SkillsModule,
+    ProjectsModule,
+    PermissionsModule,
+  ],
   controllers: [AppController],
   providers: [
     AppService,
+
+    // 🔥 FIRST: JWT must run
     {
       provide: APP_GUARD,
-      useClass: RolesGuard,
+      useClass: JwtAuthGuard,
+    },
+
+    // 🔥 SECOND: Permission guard runs after JWT
+    {
+      provide: APP_GUARD,
+      useClass: PermissionGuard,
     },
   ],
 })

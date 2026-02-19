@@ -5,8 +5,6 @@ import { AuthService } from './auth.service'
 import { AuthController } from './auth.controller'
 import { JwtStrategy } from './jwt.strategy'
 import { PrismaModule } from '../prisma/prisma.module'
-import { APP_GUARD } from '@nestjs/core'
-import { RolesGuard } from './roles.guard'
 
 @Module({
   imports: [

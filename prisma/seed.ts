@@ -1,40 +1,144 @@
-import 'dotenv/config'
-import { PrismaClient } from '@prisma/client'
-import { PrismaPg } from '@prisma/adapter-pg'
-import * as bcrypt from 'bcrypt'
+import 'dotenv/config';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import * as bcrypt from 'bcrypt';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
-})
+});
 
 const prisma = new PrismaClient({
   adapter,
-})
-
+});
 
 async function main() {
+  ////////////////////////////////////////////////////////////
+  // 1️⃣ CREATE ROLES
+  ////////////////////////////////////////////////////////////
 
-  // Create Roles
   const adminRole = await prisma.role.upsert({
     where: { name: 'ADMIN' },
     update: {},
-    create: { name: 'ADMIN', description: 'System Administrator' }
-  })
+    create: {
+      name: 'ADMIN',
+      description: 'System Administrator',
+    },
+  });
 
   const teamLeadRole = await prisma.role.upsert({
     where: { name: 'TEAM_LEAD' },
     update: {},
-    create: { name: 'TEAM_LEAD', description: 'Project Team Lead' }
-  })
+    create: {
+      name: 'TEAM_LEAD',
+      description: 'Project Team Lead',
+    },
+  });
 
   const employeeRole = await prisma.role.upsert({
     where: { name: 'EMPLOYEE' },
     update: {},
-    create: { name: 'EMPLOYEE', description: 'Regular Employee' }
-  })
+    create: {
+      name: 'EMPLOYEE',
+      description: 'Regular Employee',
+    },
+  });
 
-  // Create Default Admin User
-  const hashedPassword = await bcrypt.hash('Admin@123', 10)
+ ////////////////////////////////////////////////////////////
+// 2️⃣ CREATE PERMISSIONS (WITH MODULE FIELD)
+////////////////////////////////////////////////////////////
+
+const permissionsData = [
+  { code: 'dashboard.view', module: 'dashboard' },
+
+  { code: 'employees.view', module: 'employees' },
+  { code: 'employees.create', module: 'employees' },
+  { code: 'employees.update', module: 'employees' },
+
+  { code: 'projects.view', module: 'projects' },
+  { code: 'projects.create', module: 'projects' },
+  { code: 'projects.update', module: 'projects' },
+  { code: 'projects.delete', module: 'projects' },
+
+  { code: 'tasks.view', module: 'tasks' },
+  { code: 'tasks.update', module: 'tasks' },
+
+  { code: 'finance.view', module: 'finance' },
+  { code: 'reports.view', module: 'reports' },
+
+  { code: 'settings.view', module: 'settings' },
+  { code: 'settings.update', module: 'settings' },
+];
+
+const permissionMap: Record<string, string> = {};
+
+for (const perm of permissionsData) {
+  const permission = await prisma.permission.upsert({
+    where: { code: perm.code },
+    update: {},
+    create: {
+      code: perm.code,
+      module: perm.module,
+    },
+  });
+
+  permissionMap[perm.code] = permission.id;
+}
+
+
+  ////////////////////////////////////////////////////////////
+  // 3️⃣ DEFAULT PERMISSION MATRIX
+  ////////////////////////////////////////////////////////////
+
+  // TEAM LEAD DEFAULT PERMISSIONS
+  const teamLeadPermissions = [
+    'dashboard.view',
+    'projects.view',
+    'projects.update',
+    'tasks.view',
+    'tasks.update',
+    'employees.view',
+    'reports.view',
+  ];
+
+  // EMPLOYEE DEFAULT PERMISSIONS
+  const employeePermissions = [
+    'dashboard.view',
+    'projects.view',
+    'tasks.view',
+  ];
+
+  // Clear existing mappings (safe reset)
+  await prisma.rolePermission.deleteMany({
+    where: {
+      roleId: {
+        in: [teamLeadRole.id, employeeRole.id],
+      },
+    },
+  });
+
+  // Insert TEAM LEAD permissions
+  await prisma.rolePermission.createMany({
+    data: teamLeadPermissions.map((code) => ({
+      roleId: teamLeadRole.id,
+      permissionId: permissionMap[code],
+    })),
+    skipDuplicates: true,
+  });
+
+  // Insert EMPLOYEE permissions
+  await prisma.rolePermission.createMany({
+    data: employeePermissions.map((code) => ({
+      roleId: employeeRole.id,
+      permissionId: permissionMap[code],
+    })),
+    skipDuplicates: true,
+  });
+
+  ////////////////////////////////////////////////////////////
+  // 4️⃣ CREATE DEFAULT ADMIN USER
+  ////////////////////////////////////////////////////////////
+
+  const hashedPassword = await bcrypt.hash('Admin@123', 10);
 
   const adminUser = await prisma.user.upsert({
     where: { email: 'admin@epms.com' },
@@ -44,30 +148,34 @@ async function main() {
       passwordHash: hashedPassword,
       firstName: 'System',
       lastName: 'Admin',
-      status: 'ACTIVE'
-    }
-  })
+      status: 'ACTIVE',
+      joinedAt: new Date(),
+    },
+  });
 
-  // Assign ADMIN role
+  ////////////////////////////////////////////////////////////
+  // 5️⃣ ASSIGN ADMIN ROLE
+  ////////////////////////////////////////////////////////////
+
   await prisma.userRole.upsert({
     where: {
       userId_roleId: {
         userId: adminUser.id,
-        roleId: adminRole.id
-      }
+        roleId: adminRole.id,
+      },
     },
     update: {},
     create: {
       userId: adminUser.id,
-      roleId: adminRole.id
-    }
-  })
+      roleId: adminRole.id,
+    },
+  });
 
-  console.log('Seeding completed.')
+  console.log('✅ RBAC Seeding completed successfully.');
 }
 
 main()
-  .catch(e => console.error(e))
+  .catch((e) => console.error(e))
   .finally(async () => {
-    await prisma.$disconnect()
-  })
+    await prisma.$disconnect();
+  });
