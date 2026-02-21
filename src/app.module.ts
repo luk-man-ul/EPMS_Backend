@@ -11,6 +11,9 @@ import { UsersModule } from './users/users.module'
 import { SkillsModule } from './skills/skills.module'
 import { ProjectsModule } from './projects/projects.module'
 import { PermissionsModule } from './permissions/permissions.module'
+import { TasksModule } from './tasks/tasks.module';
+import { TicketsModule } from './tickets/tickets.module';
+import { TicketWorkflowService } from './tickets/ticket-workflow.service';
 
 @Module({
   imports: [
@@ -20,6 +23,8 @@ import { PermissionsModule } from './permissions/permissions.module'
     SkillsModule,
     ProjectsModule,
     PermissionsModule,
+    TasksModule,
+    TicketsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -36,6 +41,8 @@ import { PermissionsModule } from './permissions/permissions.module'
       provide: APP_GUARD,
       useClass: PermissionGuard,
     },
+
+    TicketWorkflowService,
   ],
 })
 export class AppModule {}

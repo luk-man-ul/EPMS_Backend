@@ -149,8 +149,9 @@ async getAllProjects(
           select: { userId: true },
         },
         tasks: {
-          select: { status: true },
-        },
+  where: { isDeleted: false },
+  select: { status: true },
+},
       },
       orderBy: { createdAt: 'desc' },
     }),
@@ -216,10 +217,9 @@ async getAllProjects(
     },
   },
   tasks: {
-    select: {
-      status: true,
-    },
-  },
+  where: { isDeleted: false },
+  select: { status: true },
+},
 }
 
     });
