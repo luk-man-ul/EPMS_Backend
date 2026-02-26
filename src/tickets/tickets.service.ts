@@ -1,0 +1,287 @@
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateTicketDto } from './dto/create-ticket.dto';
+import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
+import { AssignTicketDto } from './dto/assign-ticket.dto';
+import { UpdateTicketPriorityDto } from './dto/update-ticket-priority.dto';
+import { TicketFilterDto } from './dto/ticket-filter.dto';
+import { TicketStatus } from '@prisma/client';
+import { TicketWorkflowService } from './ticket-workflow.service';
+
+@Injectable()
+export class TicketsService {
+  constructor(
+    private prisma: PrismaService,
+    private workflow: TicketWorkflowService,
+  ) {}
+
+  ////////////////////////////////////////////////////////////////
+  // CREATE (PROJECT-SCOPED VALIDATION)
+  ////////////////////////////////////////////////////////////////
+
+  async create(user: any, dto: CreateTicketDto) {
+
+  if (!dto.projectId) {
+    throw new ForbiddenException('Project is required');
+  }
+
+  const project = await this.prisma.project.findUnique({
+    where: { id: dto.projectId },
+    include: { members: true },
+  });
+
+  if (!project) {
+    throw new NotFoundException('Project not found');
+  }
+
+  const isMember = project.members.some(
+    (member) => member.userId === user.id,
+  );
+
+  if (!isMember) {
+    throw new ForbiddenException('Not a project member');
+  }
+
+  return this.prisma.ticket.create({
+    data: {
+      title: dto.title,
+      description: dto.description,
+      type: dto.type,
+      priority: dto.priority ?? 'MEDIUM',
+      projectId: dto.projectId,
+      reporterId: user.id,
+    },
+    include: {
+      reporter: true,
+      assignee: true,
+      project: true,
+    },
+  });
+}
+  ////////////////////////////////////////////////////////////////
+  // FIND ALL (PROJECT-BASED VISIBILITY)
+  ////////////////////////////////////////////////////////////////
+
+  async findAll(user: any, filter: TicketFilterDto) {
+    const page = Number(filter.page) || 1;
+    const limit = Number(filter.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      isDeleted: false,
+    };
+
+    if (user.role === 'ADMIN') {
+      // ADMIN sees all tickets
+    } else {
+      // Get projects user belongs to
+      const memberships = await this.prisma.projectMember.findMany({
+        where: { userId: user.id },
+        select: { projectId: true },
+      });
+
+      const projectIds = memberships.map((m) => m.projectId);
+
+      where.projectId = {
+        in: projectIds,
+      };
+    }
+
+    if (filter.status) where.status = filter.status;
+    if (filter.priority) where.priority = filter.priority;
+    if (filter.projectId) where.projectId = filter.projectId;
+    if (filter.assignedToId) where.assignedToId = filter.assignedToId;
+
+    const [tickets, total] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          reporter: true,
+          assignee: true,
+          project: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.ticket.count({ where }),
+    ]);
+
+    return {
+      data: tickets,
+      meta: { total, page, limit },
+    };
+  }
+
+  ////////////////////////////////////////////////////////////////
+  // FIND ONE (PROJECT VISIBILITY ENFORCED)
+  ////////////////////////////////////////////////////////////////
+
+  async findOne(user: any, id: string) {
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, isDeleted: false },
+      include: {
+        reporter: true,
+        assignee: true,
+        project: true,
+        comments: true,
+        statusHistory: true,
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    if (user.role !== 'ADMIN') {
+      const membership = await this.prisma.projectMember.findFirst({
+        where: {
+          userId: user.id,
+          projectId: ticket.projectId,
+        },
+      });
+
+      if (!membership) {
+        throw new ForbiddenException();
+      }
+    }
+
+    return ticket;
+  }
+
+  ////////////////////////////////////////////////////////////////
+  // ASSIGN (ADMIN ONLY — PERMISSION GUARD HANDLES AUTH)
+  ////////////////////////////////////////////////////////////////
+
+async assign(user: any, id: string, dto: AssignTicketDto) {
+  const ticket = await this.prisma.ticket.findUnique({
+    where: { id },
+    include: { project: true },
+  });
+
+  if (!ticket) throw new NotFoundException('Ticket not found');
+
+  if (user.role === 'EMPLOYEE') {
+    throw new ForbiddenException(
+      'Employees cannot assign tickets',
+    );
+  }
+
+  if (
+    user.role === 'TEAM_LEAD' &&
+    ticket.project.leadId !== user.id
+  ) {
+    throw new ForbiddenException('Not your project');
+  }
+
+  return this.prisma.ticket.update({
+    where: { id },
+    data: { assignedToId: dto.assignedToId },
+  });
+}
+  ////////////////////////////////////////////////////////////////
+  // UPDATE PRIORITY
+  ////////////////////////////////////////////////////////////////
+
+  async updatePriority(id: string, dto: UpdateTicketPriorityDto) {
+    return this.prisma.ticket.update({
+      where: { id },
+      data: { priority: dto.priority },
+    });
+  }
+
+  ////////////////////////////////////////////////////////////////
+  // UPDATE STATUS (WORKFLOW ENFORCED)
+  ////////////////////////////////////////////////////////////////
+async updateStatus(
+  user: any,
+  id: string,
+  dto: UpdateTicketStatusDto,
+) {
+  const ticket = await this.prisma.ticket.findUnique({
+    where: { id },
+    include: { project: true },
+  });
+
+  if (!ticket || ticket.isDeleted)
+    throw new NotFoundException('Ticket not found');
+
+  if (user.role === 'EMPLOYEE' && ticket.assignedToId !== user.id) {
+  throw new ForbiddenException('Only assignee can update status');
+
+  }
+
+  if (
+    user.role === 'TEAM_LEAD' &&
+    ticket.project.leadId !== user.id
+  ) {
+    throw new ForbiddenException('Not your project');
+  }
+
+  this.workflow.validateTransition(ticket.status, dto.status);
+
+  return this.prisma.$transaction(async (tx) => {
+    const updated = await tx.ticket.update({
+      where: { id },
+      data: {
+        status: dto.status,
+        resolvedAt:
+          dto.status === TicketStatus.RESOLVED
+            ? new Date()
+            : ticket.resolvedAt,
+        closedAt:
+          dto.status === TicketStatus.CLOSED
+            ? new Date()
+            : ticket.closedAt,
+        resolution: dto.resolution ?? ticket.resolution,
+      },
+    });
+
+    await tx.ticketStatusHistory.create({
+      data: {
+        ticketId: id,
+        oldStatus: ticket.status,
+        newStatus: dto.status,
+        changedById: user.id,
+      },
+    });
+
+    return updated;
+  });
+}
+
+  ////////////////////////////////////////////////////////////////
+  // SOFT DELETE
+  ////////////////////////////////////////////////////////////////
+
+async remove(user: any, id: string) {
+  const ticket = await this.prisma.ticket.findUnique({
+    where: { id },
+    include: { project: true },
+  });
+
+  if (!ticket) throw new NotFoundException('Ticket not found');
+
+  if (user.role === 'EMPLOYEE') {
+    if (ticket.reporterId !== user.id) {
+      throw new ForbiddenException(
+        'You can only delete your own tickets',
+      );
+    }
+  }
+
+  if (
+    user.role === 'TEAM_LEAD' &&
+    ticket.project.leadId !== user.id
+  ) {
+    throw new ForbiddenException('Not your project');
+  }
+
+  return this.prisma.ticket.update({
+    where: { id },
+    data: { isDeleted: true },
+  });
+}
+}

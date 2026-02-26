@@ -57,6 +57,7 @@ const permissionsData = [
   { code: 'projects.view', module: 'projects' },
   { code: 'projects.create', module: 'projects' },
   { code: 'projects.update', module: 'projects' },
+  { code: 'projects.update.status', module: 'projects' },
   { code: 'projects.delete', module: 'projects' },
 
   { code: 'tasks.view', module: 'tasks' },
@@ -67,6 +68,15 @@ const permissionsData = [
 
   { code: 'settings.view', module: 'settings' },
   { code: 'settings.update', module: 'settings' },
+
+
+  { code: 'tickets.view', module: 'tickets',},
+  { code: 'tickets.create', module: 'tickets',},
+  { code: 'tickets.assign', module: 'tickets',},
+  { code: 'tickets.update.priority', module: 'tickets',},
+  { code: 'tickets.update.status', module: 'tickets',},
+  { code: 'tickets.delete', module: 'tickets',},
+  { code: 'tickets.comment', module: 'tickets',},
 ];
 
 const permissionMap: Record<string, string> = {};
@@ -89,22 +99,42 @@ for (const perm of permissionsData) {
   // 3️⃣ DEFAULT PERMISSION MATRIX
   ////////////////////////////////////////////////////////////
 
+  // ADMIN gets ALL permissions
+await prisma.rolePermission.deleteMany({
+  where: { roleId: adminRole.id },
+})
+
+await prisma.rolePermission.createMany({
+  data: Object.values(permissionMap).map((permissionId) => ({
+    roleId: adminRole.id,
+    permissionId,
+  })),
+  skipDuplicates: true,
+})
   // TEAM LEAD DEFAULT PERMISSIONS
   const teamLeadPermissions = [
     'dashboard.view',
     'projects.view',
     'projects.update',
+    'projects.update.status',
     'tasks.view',
     'tasks.update',
     'employees.view',
     'reports.view',
+    'tickets.view',
+    'tickets.comment',
   ];
 
   // EMPLOYEE DEFAULT PERMISSIONS
   const employeePermissions = [
     'dashboard.view',
     'projects.view',
+    'projects.update.status',
     'tasks.view',
+    'tickets.view',
+    'tickets.create',
+    'tickets.comment',
+    'tickets.update.status',
   ];
 
   // Clear existing mappings (safe reset)

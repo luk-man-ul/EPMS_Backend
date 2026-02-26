@@ -42,8 +42,10 @@ enum Priority {
 enum TicketStatus {
   OPEN
   IN_PROGRESS
+  WAITING_FOR_USER
   RESOLVED
   CLOSED
+  REJECTED
   REOPENED
 }
 
@@ -116,6 +118,8 @@ model User {
   // Ticket relations
   reportedTickets Ticket[]  @relation("TicketReporter")
   assignedTickets Ticket[]  @relation("TicketAssignee")
+  ticketComments      TicketComment[]
+  ticketStatusChanges TicketStatusHistory[]
 
   // Time logs
   timeLogs        TimeLog[] @relation("TimeLogUser")
@@ -262,12 +266,17 @@ model Task {
   description   String?
   priority      Priority    @default(MEDIUM)
   status        TaskStatus  @default(TODO)
+
   assignedToId  String?
   createdById   String
+
   dueDate       DateTime?
   estimatedHrs  Float?
   actualHrs     Float?
   completedAt   DateTime?
+
+  position      Int         @default(0)
+  isDeleted     Boolean     @default(false)
 
   project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assignee      User?   @relation("TaskAssignee", fields: [assignedToId], references: [id])
@@ -282,6 +291,8 @@ model Task {
   @@index([projectId])
   @@index([assignedToId])
   @@index([status])
+  @@index([priority])
+  @@index([dueDate])
 }
 
 model TaskStatusHistory {
@@ -300,30 +311,44 @@ model TaskStatusHistory {
 //////////////////////////////////////////////////////
 // TICKETS
 //////////////////////////////////////////////////////
-
 model Ticket {
   id            String       @id @default(uuid())
-  projectId     String?
+
+  projectId     String
   title         String
   description   String
   type          TicketType
-  priority      Priority
+
+  priority      Priority     @default(MEDIUM)
   status        TicketStatus @default(OPEN)
+
   reporterId    String
   assignedToId  String?
+
   slaDueAt      DateTime?
   escalated     Boolean      @default(false)
+
   resolution    String?
   resolvedAt    DateTime?
+  closedAt      DateTime?
 
-  project       Project? @relation(fields: [projectId], references: [id])
+  isDeleted     Boolean      @default(false)
+
+  project       Project @relation(fields: [projectId], references: [id])
   reporter      User     @relation("TicketReporter", fields: [reporterId], references: [id])
   assignee      User?    @relation("TicketAssignee", fields: [assignedToId], references: [id])
+
+  comments      TicketComment[]
+  statusHistory TicketStatusHistory[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([status])
+  @@index([priority])
+  @@index([reporterId])
+  @@index([assignedToId])
+  @@index([projectId])
 }
 
 //////////////////////////////////////////////////////
@@ -504,4 +529,48 @@ model FileAttachment {
   uploadedBy   User @relation(fields: [uploadedById], references: [id])
 
   uploadedAt   DateTime @default(now())
+}
+
+
+//////////////////////////////////////////////////////
+// TICKET HISTORY
+//////////////////////////////////////////////////////
+
+model TicketStatusHistory {
+  id          String       @id @default(uuid())
+
+  ticketId    String
+  oldStatus   TicketStatus
+  newStatus   TicketStatus
+  changedById String
+
+  ticket      Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy   User   @relation(fields: [changedById], references: [id])
+
+  changedAt   DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+//////////////////////////////////////////////////////
+// TICKET COMMENT
+//////////////////////////////////////////////////////
+
+model TicketComment {
+  id        String   @id @default(uuid())
+
+  ticketId  String
+  authorId  String
+  content   String
+
+  isDeleted Boolean  @default(false)
+
+  ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    User   @relation(fields: [authorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ticketId])
+  @@index([authorId])
 }
