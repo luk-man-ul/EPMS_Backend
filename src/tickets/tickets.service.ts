@@ -93,7 +93,22 @@ export class TicketsService {
 
     if (filter.status) where.status = filter.status;
     if (filter.priority) where.priority = filter.priority;
-    if (filter.projectId) where.projectId = filter.projectId;
+    if (filter.projectId) {
+  if (user.role !== 'ADMIN') {
+    const memberships = await this.prisma.projectMember.findFirst({
+      where: {
+        userId: user.id,
+        projectId: filter.projectId,
+      },
+    });
+
+    if (!memberships) {
+      throw new ForbiddenException('Not your project');
+    }
+  }
+
+  where.projectId = filter.projectId;
+}
     if (filter.assignedToId) where.assignedToId = filter.assignedToId;
 
     const [tickets, total] = await Promise.all([
@@ -127,7 +142,15 @@ export class TicketsService {
       include: {
         reporter: true,
         assignee: true,
-        project: true,
+        project: {
+  include: {
+    members: {
+      include: {
+        user: true,
+      },
+    },
+  },
+},
         comments: true,
         statusHistory: true,
       },
@@ -161,19 +184,35 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
     include: { project: true },
   });
 
-  if (!ticket) throw new NotFoundException('Ticket not found');
+  if (!ticket || ticket.isDeleted) {
+    throw new NotFoundException('Ticket not found');
+  }
 
+  // EMPLOYEE cannot assign
   if (user.role === 'EMPLOYEE') {
     throw new ForbiddenException(
       'Employees cannot assign tickets',
     );
   }
 
+  // TEAM_LEAD can assign only if they lead this project
   if (
     user.role === 'TEAM_LEAD' &&
     ticket.project.leadId !== user.id
   ) {
     throw new ForbiddenException('Not your project');
+  }
+
+  // 🔥 NEW CHECK: Assigned user must be part of project
+  const member = await this.prisma.projectMember.findFirst({
+    where: {
+      userId: dto.assignedToId,
+      projectId: ticket.projectId,
+    },
+  });
+
+  if (!member) {
+    throw new ForbiddenException('User not part of project');
   }
 
   return this.prisma.ticket.update({
@@ -262,8 +301,9 @@ async remove(user: any, id: string) {
     include: { project: true },
   });
 
-  if (!ticket) throw new NotFoundException('Ticket not found');
-
+  if (!ticket || ticket.isDeleted) {
+  throw new NotFoundException('Ticket not found');
+}
   if (user.role === 'EMPLOYEE') {
     if (ticket.reporterId !== user.id) {
       throw new ForbiddenException(

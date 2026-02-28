@@ -16,22 +16,61 @@ export class TasksService {
   // CREATE TASK
   ////////////////////////////////////////////////////////////
 
- async create(dto: CreateTaskDto, user: any) {
+async create(dto: CreateTaskDto, user: any) {
   const project = await this.prisma.project.findUnique({
     where: { id: dto.projectId },
     include: { members: true },
-  })
+  });
 
-  if (!project) throw new NotFoundException('Project not found')
-
-  // EMPLOYEE must be project member
-  if (
-    user.role === 'EMPLOYEE' &&
-    !project.members.some((m) => m.userId === user.sub)
-  ) {
-    throw new ForbiddenException('Not a member of this project')
+  if (!project) {
+    throw new NotFoundException('Project not found');
   }
 
+  ////////////////////////////////////////////////////////////
+  // ✅ VALIDATE ASSIGNEE IS PROJECT MEMBER
+  ////////////////////////////////////////////////////////////
+
+  if (dto.assignedToId) {
+    const isMember = project.members.some(
+      (member) => member.userId === dto.assignedToId
+    );
+    
+    if (!isMember) {
+      throw new ForbiddenException(
+        'Cannot assign task to user outside the project'
+      );
+    }
+  }
+
+  ////////////////////////////////////////////////////////////
+  // 🔐 ADMIN → Full access
+  ////////////////////////////////////////////////////////////
+
+  if (user.role === 'ADMIN') {
+    return this.createTask(dto, user.id);
+  }
+
+  ////////////////////////////////////////////////////////////
+  // 🔐 TEAM_LEAD → Only if owner
+  ////////////////////////////////////////////////////////////
+
+  if (user.role === 'TEAM_LEAD') {
+    if (project.leadId !== user.id) {
+      throw new ForbiddenException('Not your project');
+    }
+
+    return this.createTask(dto, user.id);
+  }
+
+  ////////////////////////////////////////////////////////////
+  // EMPLOYEE → Blocked
+  ////////////////////////////////////////////////////////////
+
+  throw new ForbiddenException(
+    'Employees are not allowed to create tasks',
+  );
+}
+private async createTask(dto: CreateTaskDto, userId: string) {
   return this.prisma.task.create({
     data: {
       projectId: dto.projectId,
@@ -40,9 +79,9 @@ export class TasksService {
       priority: dto.priority,
       assignedToId: dto.assignedToId || null,
       dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-      createdById: user.id, // ✅ FIXED HERE
+      createdById: userId,
     },
-  })
+  });
 }
 
   ////////////////////////////////////////////////////////////
@@ -183,7 +222,11 @@ async findOne(id: string, user: any) {
 async update(id: string, dto: UpdateTaskDto, user: any) {
   const task = await this.prisma.task.findUnique({
     where: { id },
-    include: { project: true },
+    include: { 
+      project: {
+        include: { members: true }
+      }
+    },
   })
 
   if (!task) {
@@ -225,11 +268,33 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   // TEAM_LEAD RULES
   ////////////////////////////////////////////////////////////
 
-  if (
-    user.role === 'TEAM_LEAD' &&
-    task.project.leadId !== user.id
-  ) {
-    throw new ForbiddenException('Not your project')
+  if (user.role === 'TEAM_LEAD') {
+    if (task.project.leadId !== user.id) {
+      throw new ForbiddenException('Not your project')
+    }
+
+    // ✅ PREVENT TEAM_LEAD FROM CHANGING PROJECT
+    if (dto.projectId !== undefined && dto.projectId !== task.projectId) {
+      throw new ForbiddenException(
+        'Team Leads cannot move tasks between projects'
+      );
+    }
+  }
+
+  ////////////////////////////////////////////////////////////
+  // ✅ VALIDATE ASSIGNEE IS PROJECT MEMBER
+  ////////////////////////////////////////////////////////////
+
+  if (dto.assignedToId !== undefined && dto.assignedToId !== null) {
+    const isMember = task.project.members.some(
+      (member) => member.userId === dto.assignedToId
+    );
+    
+    if (!isMember) {
+      throw new ForbiddenException(
+        'Cannot assign task to user outside the project'
+      );
+    }
   }
 
   ////////////////////////////////////////////////////////////
@@ -267,6 +332,9 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   ////////////////////////////////////////////////////////////
 
   if (dto.status && dto.status !== task.status) {
+    // ✅ VALIDATE STATUS TRANSITION (ROLE-AWARE)
+    this.validateStatusTransition(task.status, dto.status as TaskStatus, user.role);
+    
     await this.prisma.taskStatusHistory.create({
       data: {
         taskId: id,
@@ -501,5 +569,71 @@ async getStatusBreakdown(user: any) {
   })
 
   return breakdown
+}
+
+////////////////////////////////////////////////////////////
+// VALIDATE STATUS TRANSITION (ROLE-AWARE)
+////////////////////////////////////////////////////////////
+
+private validateStatusTransition(
+  oldStatus: TaskStatus, 
+  newStatus: TaskStatus, 
+  userRole: string
+): void {
+  // Base transition map (what's physically possible)
+  const baseTransitions: Record<TaskStatus, TaskStatus[]> = {
+    TODO: ['IN_PROGRESS', 'CANCELLED'],
+    IN_PROGRESS: ['REVIEW', 'TODO', 'CANCELLED'],
+    REVIEW: ['COMPLETED', 'IN_PROGRESS', 'CANCELLED'],
+    COMPLETED: ['IN_PROGRESS'], // Can be reopened by TEAM_LEAD/ADMIN
+    CANCELLED: [], // Cannot transition from CANCELLED
+  };
+
+  // Role-specific restrictions
+  if (userRole === 'EMPLOYEE') {
+    // EMPLOYEE can only do limited transitions
+    const employeeAllowed: Record<TaskStatus, TaskStatus[]> = {
+      TODO: ['IN_PROGRESS'],
+      IN_PROGRESS: ['REVIEW'],
+      REVIEW: ['IN_PROGRESS'],
+      COMPLETED: [], // Cannot change completed tasks
+      CANCELLED: [], // Cannot change cancelled tasks
+    };
+
+    const allowed = employeeAllowed[oldStatus] || [];
+    if (!allowed.includes(newStatus)) {
+      throw new ForbiddenException(
+        `Employees cannot perform transition: ${oldStatus} → ${newStatus}`
+      );
+    }
+    return;
+  }
+
+  if (userRole === 'TEAM_LEAD') {
+    // TEAM_LEAD can do more, including completing and reopening
+    const teamLeadAllowed: Record<TaskStatus, TaskStatus[]> = {
+      TODO: ['IN_PROGRESS', 'CANCELLED'],
+      IN_PROGRESS: ['REVIEW', 'TODO', 'CANCELLED'],
+      REVIEW: ['COMPLETED', 'IN_PROGRESS', 'CANCELLED'],
+      COMPLETED: ['IN_PROGRESS'], // Can reopen
+      CANCELLED: [], // Cannot reopen cancelled
+    };
+
+    const allowed = teamLeadAllowed[oldStatus] || [];
+    if (!allowed.includes(newStatus)) {
+      throw new ForbiddenException(
+        `Invalid status transition: ${oldStatus} → ${newStatus}`
+      );
+    }
+    return;
+  }
+
+  // ADMIN: Use base transition map (full control within valid transitions)
+  const allowed = baseTransitions[oldStatus] || [];
+  if (!allowed.includes(newStatus)) {
+    throw new ForbiddenException(
+      `Invalid status transition: ${oldStatus} → ${newStatus}`
+    );
+  }
 }
 }

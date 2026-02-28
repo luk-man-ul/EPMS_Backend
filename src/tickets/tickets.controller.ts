@@ -32,8 +32,8 @@ export class TicketsController {
   @Permissions('tickets.create')
   @Post()
   create(@Req() req, @Body() dto: CreateTicketDto) {
-    return this.ticketsService.create(req.user.id, dto);
-  }
+  return this.ticketsService.create(req.user, dto);
+}
 
   ////////////////////////////////////////////////////////////////
   // GET ALL TICKETS (ROLE VISIBILITY CONTROLLED IN SERVICE)

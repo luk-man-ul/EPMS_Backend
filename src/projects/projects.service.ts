@@ -301,56 +301,105 @@ if (project.status === 'COMPLETED' || project.status === 'ARCHIVED') {
   // UPDATE PROJECT (FULL)
   ////////////////////////////////////////////////////////////
 
-  async updateProject(id: string, dto: UpdateProjectDto, user: any) {
-    const existingProject = await this.prisma.project.findUnique({
-      where: { id },
-    });
+ ////////////////////////////////////////////////////////////
+// UPDATE PROJECT (FULL)
+////////////////////////////////////////////////////////////
 
-    if (!existingProject)
-      throw new NotFoundException('Project not found');
+async updateProject(id: string, dto: UpdateProjectDto, user: any) {
+  const existingProject = await this.prisma.project.findUnique({
+    where: { id },
+  });
 
-    if (user.role !== 'TEAM_LEAD')
-      throw new ForbiddenException(
-        'Only Team Lead can update project',
-      );
-
-    if (existingProject.leadId !== user.id)
-      throw new ForbiddenException('Access denied');
-
-    const { memberIds, leadId, startDate, endDate, ...rest } =
-      dto as any;
-
-    const updatedProject = await this.prisma.project.update({
-      where: { id },
-      data: {
-        ...rest,
-        startDate: startDate ? new Date(startDate) : undefined,
-        endDate: endDate ? new Date(endDate) : undefined,
-        ...(leadId && {
-          lead: { connect: { id: leadId } },
-        }),
-        ...(memberIds && {
-          members: {
-            deleteMany: {},
-            create: memberIds.map((userId: string) => ({
-              user: { connect: { id: userId } },
-            })),
-          },
-        }),
-      },
-      include: {
-        lead: true,
-        members: { include: { user: true } },
-        tasks: {
-          where: { isDeleted: false },
-          select: { status: true },
-        },
-      },
-    });
-
-    return this.formatProject(updatedProject);
+  if (!existingProject) {
+    throw new NotFoundException('Project not found');
   }
 
+  ////////////////////////////////////////////////////////////
+  // 🔐 ROLE AUTHORIZATION
+  ////////////////////////////////////////////////////////////
+
+  // ADMIN → Full access
+  if (user.role === 'ADMIN') {
+    return this.performProjectUpdate(id, dto);
+  }
+
+  // TEAM_LEAD → Only if owner
+  if (user.role === 'TEAM_LEAD') {
+    if (existingProject.leadId !== user.id) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    return this.performProjectUpdate(id, dto);
+  }
+
+  // EMPLOYEE → Blocked
+  throw new ForbiddenException(
+    'Employees are not authorized to update project',
+  );
+}
+private async performProjectUpdate(
+  id: string,
+  dto: UpdateProjectDto,
+) {
+  const existingProject = await this.prisma.project.findUnique({
+    where: { id },
+  });
+
+  const { memberIds, leadId, startDate, endDate, ...rest } =
+    dto as any;
+
+  const finalLeadId = leadId || existingProject?.leadId;
+
+  ////////////////////////////////////////////////////////////
+  // 🔒 BUSINESS RULE: Lead must always be a member
+  ////////////////////////////////////////////////////////////
+
+  if (memberIds && !memberIds.includes(finalLeadId)) {
+    throw new BadRequestException(
+      'Project lead must be included in project members',
+    );
+  }
+
+  ////////////////////////////////////////////////////////////
+  // 🔥 ENSURE LEAD IS INCLUDED (SAFETY)
+  ////////////////////////////////////////////////////////////
+
+  const uniqueMembers = memberIds
+    ? Array.from(new Set([...memberIds, finalLeadId]))
+    : undefined;
+
+  const updatedProject = await this.prisma.project.update({
+    where: { id },
+    data: {
+      ...rest,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+
+      ...(leadId && {
+        lead: { connect: { id: leadId } },
+      }),
+
+      ...(uniqueMembers && {
+        members: {
+          deleteMany: {},
+          create: uniqueMembers.map((userId: string) => ({
+            user: { connect: { id: userId } },
+          })),
+        },
+      }),
+    },
+    include: {
+      lead: true,
+      members: { include: { user: true } },
+      tasks: {
+        where: { isDeleted: false },
+        select: { status: true },
+      },
+    },
+  });
+
+  return this.formatProject(updatedProject);
+}
   ////////////////////////////////////////////////////////////
   // UPDATE STATUS
   ////////////////////////////////////////////////////////////
