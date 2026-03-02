@@ -8,10 +8,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProjectStatus } from '@prisma/client';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { ProjectWorkflowService } from './project-workflow.service';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly workflowService: ProjectWorkflowService;
+
+  constructor(private prisma: PrismaService) {
+    this.workflowService = new ProjectWorkflowService();
+  }
 
   ////////////////////////////////////////////////////////////
   // CREATE PROJECT
@@ -47,7 +52,7 @@ export class ProjectsService {
 
     if (!isTeamLead) {
       throw new BadRequestException(
-        'Lead must have TEAM_LEAD role',
+        'Project lead must have TEAM_LEAD role. Please promote the user first.',
       );
     }
 
@@ -96,8 +101,12 @@ export class ProjectsService {
 
     let whereCondition: any = {};
 
+    // TEAM_LEAD sees projects where lead OR member
     if (user.role === 'TEAM_LEAD') {
-      whereCondition.leadId = user.id;
+      whereCondition.OR = [
+        { leadId: user.id },
+        { members: { some: { userId: user.id } } }
+      ];
     }
 
     if (user.role === 'EMPLOYEE') {
@@ -180,8 +189,12 @@ if (project.status === 'COMPLETED' || project.status === 'ARCHIVED') {
   async getMyProjects(user: any) {
     let whereCondition: any = {};
 
+    // TEAM_LEAD sees projects where lead OR member
     if (user.role === 'TEAM_LEAD') {
-      whereCondition.leadId = user.id;
+      whereCondition.OR = [
+        { leadId: user.id },
+        { members: { some: { userId: user.id } } }
+      ];
     }
 
     if (user.role === 'EMPLOYEE') {
@@ -279,11 +292,14 @@ if (project.status === 'COMPLETED' || project.status === 'ARCHIVED') {
     if (!project)
       throw new NotFoundException('Project not found');
 
-    if (
-      user.role === 'TEAM_LEAD' &&
-      project.leadId !== user.id
-    ) {
-      throw new ForbiddenException('Access denied');
+    // TEAM_LEAD can access if lead OR member
+    if (user.role === 'TEAM_LEAD') {
+      const isLead = project.leadId === user.id;
+      const isMember = project.members.some((m) => m.userId === user.id);
+      
+      if (!isLead && !isMember) {
+        throw new ForbiddenException('Access denied');
+      }
     }
 
     if (user.role === 'EMPLOYEE') {
@@ -323,9 +339,21 @@ async updateProject(id: string, dto: UpdateProjectDto, user: any) {
     return this.performProjectUpdate(id, dto);
   }
 
-  // TEAM_LEAD → Only if owner
+  // TEAM_LEAD → Can update if lead OR member
   if (user.role === 'TEAM_LEAD') {
-    if (existingProject.leadId !== user.id) {
+    const project = await this.prisma.project.findUnique({
+      where: { id },
+      include: { members: true }
+    });
+    
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    
+    const isLead = project.leadId === user.id;
+    const isMember = project.members.some((m) => m.userId === user.id);
+    
+    if (!isLead && !isMember) {
       throw new ForbiddenException('Access denied');
     }
 
@@ -347,6 +375,28 @@ private async performProjectUpdate(
 
   const { memberIds, leadId, startDate, endDate, ...rest } =
     dto as any;
+
+  // Validate new lead has TEAM_LEAD role (if lead is being changed)
+  if (leadId && leadId !== existingProject?.leadId) {
+    const newLead = await this.prisma.user.findUnique({
+      where: { id: leadId },
+      include: { roles: { include: { role: true } } },
+    });
+
+    if (!newLead) {
+      throw new NotFoundException('New lead not found');
+    }
+
+    const isTeamLead = newLead.roles.some(
+      (r) => r.role.name === 'TEAM_LEAD',
+    );
+
+    if (!isTeamLead) {
+      throw new BadRequestException(
+        'Project lead must have TEAM_LEAD role. Please promote the user first.',
+      );
+    }
+  }
 
   const finalLeadId = leadId || existingProject?.leadId;
 
@@ -417,6 +467,15 @@ async updateProjectStatus(
   }
 
   ////////////////////////////////////////////////////////////
+  // 🔒 WORKFLOW VALIDATION (Requirement 27.2, 27.3)
+  ////////////////////////////////////////////////////////////
+
+  this.workflowService.validateTransition(
+    existingProject.status,
+    status as ProjectStatus
+  );
+
+  ////////////////////////////////////////////////////////////
   // 🔒 BUSINESS RULE: Prevent completion if tasks open
   ////////////////////////////////////////////////////////////
 
@@ -460,11 +519,23 @@ async updateProjectStatus(
     return this.formatProject(updatedProject);
   }
 
-  // TEAM_LEAD → Only if owner
+  // TEAM_LEAD → Can update status if lead OR member
   if (user.role === 'TEAM_LEAD') {
-    if (existingProject.leadId !== user.id) {
+    const project = await this.prisma.project.findUnique({
+      where: { id },
+      include: { members: true }
+    });
+    
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    
+    const isLead = project.leadId === user.id;
+    const isMember = project.members.some((m) => m.userId === user.id);
+    
+    if (!isLead && !isMember) {
       throw new ForbiddenException(
-        'Only the assigned project lead can change lifecycle status',
+        'Only the assigned project lead or member can change lifecycle status',
       );
     }
 
@@ -496,16 +567,21 @@ async updateProjectStatus(
   async deleteProject(id: string, user: any) {
     const project = await this.prisma.project.findUnique({
       where: { id },
+      include: { members: true }
     });
 
     if (!project)
       throw new NotFoundException('Project not found');
 
-    if (
-      user.role === 'TEAM_LEAD' &&
-      project.leadId !== user.id
-    )
-      throw new ForbiddenException('Access denied');
+    // TEAM_LEAD can delete if lead OR member
+    if (user.role === 'TEAM_LEAD') {
+      const isLead = project.leadId === user.id;
+      const isMember = project.members.some((m) => m.userId === user.id);
+      
+      if (!isLead && !isMember) {
+        throw new ForbiddenException('Access denied');
+      }
+    }
 
     await this.prisma.project.delete({
       where: { id },

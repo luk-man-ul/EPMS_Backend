@@ -107,11 +107,13 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       where.assignedToId = user.id
     }
 
+    // TEAM_LEAD sees tasks in led projects OR assigned to them
     if (user.role === 'TEAM_LEAD') {
-  where.project = {
-    leadId: user.id,
-  }
-}
+      where.OR = [
+        { project: { leadId: user.id } },
+        { assignedToId: user.id }
+      ]
+    }
 
     const [tasks, total] = await this.prisma.$transaction([
       this.prisma.task.findMany({
@@ -206,12 +208,14 @@ async findOne(id: string, user: any) {
     throw new ForbiddenException('Access denied')
   }
 
-  // 🔐 TEAM_LEAD restriction
-  if (
-    user.role === 'TEAM_LEAD' &&
-    task.project.leadId !== user.id
-  ) {
-    throw new ForbiddenException('Access denied')
+  // 🔐 TEAM_LEAD restriction - can access if lead OR assigned
+  if (user.role === 'TEAM_LEAD') {
+    const isLead = task.project.leadId === user.id
+    const isAssigned = task.assignedToId === user.id
+    
+    if (!isLead && !isAssigned) {
+      throw new ForbiddenException('Access denied')
+    }
   }
 
   return task
@@ -269,8 +273,11 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   ////////////////////////////////////////////////////////////
 
   if (user.role === 'TEAM_LEAD') {
-    if (task.project.leadId !== user.id) {
-      throw new ForbiddenException('Not your project')
+    const isLead = task.project.leadId === user.id
+    const isAssigned = task.assignedToId === user.id
+    
+    if (!isLead && !isAssigned) {
+      throw new ForbiddenException('Not your project or task')
     }
 
     // ✅ PREVENT TEAM_LEAD FROM CHANGING PROJECT
@@ -424,12 +431,14 @@ return this.prisma.task.findUnique({
       throw new ForbiddenException('Employees cannot delete tasks')
     }
 
-    // TEAM_LEAD restriction
-    if (
-      user.role === 'TEAM_LEAD' &&
-      task.project.leadId !== user.id
-    ) {
-      throw new ForbiddenException('Not your project')
+    // TEAM_LEAD restriction - can delete if lead OR assigned
+    if (user.role === 'TEAM_LEAD') {
+      const isLead = task.project.leadId === user.id
+      const isAssigned = task.assignedToId === user.id
+      
+      if (!isLead && !isAssigned) {
+        throw new ForbiddenException('Not your project or task')
+      }
     }
 
     return this.prisma.task.update({
@@ -451,10 +460,12 @@ async findMyTasks(user: any) {
     where.assignedToId = user.id
   }
 
+  // TEAM_LEAD sees tasks in led projects OR assigned to them
   if (user.role === 'TEAM_LEAD') {
-    where.project = {
-      leadId: user.id,
-    }
+    where.OR = [
+      { project: { leadId: user.id } },
+      { assignedToId: user.id }
+    ]
   }
 
   return this.prisma.task.findMany({
@@ -488,8 +499,12 @@ async getDashboardSummary(user: any) {
     ticketWhere.assignedToId = user.id
   }
 
+  // TEAM_LEAD sees tasks in led projects OR assigned to them
   if (user.role === 'TEAM_LEAD') {
-    taskWhere.project = { leadId: user.id }
+    taskWhere.OR = [
+      { project: { leadId: user.id } },
+      { assignedToId: user.id }
+    ]
     projectWhere.leadId = user.id
     ticketWhere.project = { leadId: user.id }
   }
@@ -547,8 +562,12 @@ async getStatusBreakdown(user: any) {
     where.assignedToId = user.id
   }
 
+  // TEAM_LEAD sees tasks in led projects OR assigned to them
   if (user.role === 'TEAM_LEAD') {
-    where.project = { leadId: user.id }
+    where.OR = [
+      { project: { leadId: user.id } },
+      { assignedToId: user.id }
+    ]
   }
 
   const tasks = await this.prisma.task.findMany({

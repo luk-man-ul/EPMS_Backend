@@ -77,8 +77,15 @@ export class TicketsService {
 
     if (user.role === 'ADMIN') {
       // ADMIN sees all tickets
+    } else if (user.role === 'TEAM_LEAD') {
+      // TEAM_LEAD sees tickets in led projects OR assigned to them OR created by them
+      where.OR = [
+        { project: { leadId: user.id } },
+        { assignedToId: user.id },
+        { reporterId: user.id }
+      ];
     } else {
-      // Get projects user belongs to
+      // EMPLOYEE sees tickets in projects they're members of
       const memberships = await this.prisma.projectMember.findMany({
         where: { userId: user.id },
         select: { projectId: true },
@@ -159,15 +166,27 @@ export class TicketsService {
     if (!ticket) throw new NotFoundException('Ticket not found');
 
     if (user.role !== 'ADMIN') {
-      const membership = await this.prisma.projectMember.findFirst({
-        where: {
-          userId: user.id,
-          projectId: ticket.projectId,
-        },
-      });
+      if (user.role === 'TEAM_LEAD') {
+        // TEAM_LEAD can access if: lead of project OR assigned OR reporter
+        const isLead = ticket.project.leadId === user.id;
+        const isAssigned = ticket.assignedToId === user.id;
+        const isReporter = ticket.reporterId === user.id;
+        
+        if (!isLead && !isAssigned && !isReporter) {
+          throw new ForbiddenException();
+        }
+      } else {
+        // EMPLOYEE must be project member
+        const membership = await this.prisma.projectMember.findFirst({
+          where: {
+            userId: user.id,
+            projectId: ticket.projectId,
+          },
+        });
 
-      if (!membership) {
-        throw new ForbiddenException();
+        if (!membership) {
+          throw new ForbiddenException();
+        }
       }
     }
 
@@ -195,12 +214,15 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
     );
   }
 
-  // TEAM_LEAD can assign only if they lead this project
-  if (
-    user.role === 'TEAM_LEAD' &&
-    ticket.project.leadId !== user.id
-  ) {
-    throw new ForbiddenException('Not your project');
+  // TEAM_LEAD can assign if: lead of project OR assigned OR reporter
+  if (user.role === 'TEAM_LEAD') {
+    const isLead = ticket.project.leadId === user.id;
+    const isAssigned = ticket.assignedToId === user.id;
+    const isReporter = ticket.reporterId === user.id;
+    
+    if (!isLead && !isAssigned && !isReporter) {
+      throw new ForbiddenException('Not your project or ticket');
+    }
   }
 
   // 🔥 NEW CHECK: Assigned user must be part of project
@@ -252,11 +274,15 @@ async updateStatus(
 
   }
 
-  if (
-    user.role === 'TEAM_LEAD' &&
-    ticket.project.leadId !== user.id
-  ) {
-    throw new ForbiddenException('Not your project');
+  // TEAM_LEAD can update status if: lead of project OR assigned OR reporter
+  if (user.role === 'TEAM_LEAD') {
+    const isLead = ticket.project.leadId === user.id;
+    const isAssigned = ticket.assignedToId === user.id;
+    const isReporter = ticket.reporterId === user.id;
+    
+    if (!isLead && !isAssigned && !isReporter) {
+      throw new ForbiddenException('Not your project or ticket');
+    }
   }
 
   this.workflow.validateTransition(ticket.status, dto.status);
@@ -312,11 +338,15 @@ async remove(user: any, id: string) {
     }
   }
 
-  if (
-    user.role === 'TEAM_LEAD' &&
-    ticket.project.leadId !== user.id
-  ) {
-    throw new ForbiddenException('Not your project');
+  // TEAM_LEAD can delete if: lead of project OR assigned OR reporter
+  if (user.role === 'TEAM_LEAD') {
+    const isLead = ticket.project.leadId === user.id;
+    const isAssigned = ticket.assignedToId === user.id;
+    const isReporter = ticket.reporterId === user.id;
+    
+    if (!isLead && !isAssigned && !isReporter) {
+      throw new ForbiddenException('Not your project or ticket');
+    }
   }
 
   return this.prisma.ticket.update({

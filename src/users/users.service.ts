@@ -106,27 +106,33 @@ export class UsersService {
       throw new ForbiddenException('Only ADMIN can promote');
     }
 
-    const teamLeadRole = await this.prisma.role.findUnique({
-      where: { name: 'TEAM_LEAD' },
-    });
+    // Get both roles
+    const [employeeRole, teamLeadRole] = await Promise.all([
+      this.prisma.role.findUnique({ where: { name: 'EMPLOYEE' } }),
+      this.prisma.role.findUnique({ where: { name: 'TEAM_LEAD' } }),
+    ]);
 
-    if (!teamLeadRole) {
-      throw new Error('TEAM_LEAD role not found');
+    if (!employeeRole || !teamLeadRole) {
+      throw new Error('Required roles not found');
     }
 
-    await this.prisma.userRole.upsert({
-      where: {
-        userId_roleId: {
+    // Use transaction to replace role atomically
+    await this.prisma.$transaction([
+      // Remove EMPLOYEE role
+      this.prisma.userRole.deleteMany({
+        where: {
+          userId,
+          roleId: employeeRole.id,
+        },
+      }),
+      // Add TEAM_LEAD role
+      this.prisma.userRole.create({
+        data: {
           userId,
           roleId: teamLeadRole.id,
         },
-      },
-      update: {},
-      create: {
-        userId,
-        roleId: teamLeadRole.id,
-      },
-    });
+      }),
+    ]);
 
     return { message: 'User promoted to TEAM_LEAD' };
   }
@@ -140,20 +146,54 @@ export class UsersService {
       throw new ForbiddenException('Only ADMIN can demote');
     }
 
-    const teamLeadRole = await this.prisma.role.findUnique({
-      where: { name: 'TEAM_LEAD' },
+    // CRITICAL: Check if user is leading any projects
+    const ledProjects = await this.prisma.project.findMany({
+      where: { leadId: userId },
+      select: { id: true, name: true },
     });
 
-    if (!teamLeadRole) {
-      throw new Error('TEAM_LEAD role not found');
+    if (ledProjects.length > 0) {
+      const projectNames = ledProjects.map(p => p.name).join(', ');
+      throw new BadRequestException(
+        `Cannot demote user. They are currently leading ${ledProjects.length} project(s): ${projectNames}. ` +
+        `Please reassign project leadership first.`
+      );
     }
 
-    await this.prisma.userRole.deleteMany({
-      where: {
-        userId,
-        roleId: teamLeadRole.id,
-      },
-    });
+    // Get both roles
+    const [employeeRole, teamLeadRole] = await Promise.all([
+      this.prisma.role.findUnique({ where: { name: 'EMPLOYEE' } }),
+      this.prisma.role.findUnique({ where: { name: 'TEAM_LEAD' } }),
+    ]);
+
+    if (!employeeRole || !teamLeadRole) {
+      throw new Error('Required roles not found');
+    }
+
+    // Use transaction to replace role atomically
+    await this.prisma.$transaction([
+      // Remove TEAM_LEAD role
+      this.prisma.userRole.deleteMany({
+        where: {
+          userId,
+          roleId: teamLeadRole.id,
+        },
+      }),
+      // Ensure EMPLOYEE role exists
+      this.prisma.userRole.upsert({
+        where: {
+          userId_roleId: {
+            userId,
+            roleId: employeeRole.id,
+          },
+        },
+        update: {},
+        create: {
+          userId,
+          roleId: employeeRole.id,
+        },
+      }),
+    ]);
 
     return { message: 'User demoted to EMPLOYEE' };
   }
