@@ -236,37 +236,47 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   if (!task) {
     throw new NotFoundException('Task not found')
   }
+  console.log('---- UPDATE DEBUG ----');
+console.log('User Role:', user.role);
+console.log('User ID:', user.id);
+console.log('Task AssignedTo:', task.assignedToId);
+console.log('Old Status:', task.status);
+console.log('Incoming DTO:', dto);
+console.log('Incoming DTO:', JSON.stringify(dto));
 
   ////////////////////////////////////////////////////////////
   // EMPLOYEE RULES
   ////////////////////////////////////////////////////////////
 
-  if (user.role === 'EMPLOYEE') {
-    if (task.assignedToId !== user.id) {
-      throw new ForbiddenException('You can only update your own tasks')
-    }
-
-    // EMPLOYEE can ONLY update status
-    if (!dto.status) {
-      throw new ForbiddenException(
-        'Employees can only update task status',
-      )
-    }
-
-    // Prevent modifying other fields
-    const allowedFields = ['status']
-    const incomingFields = Object.keys(dto)
-
-    const invalidUpdate = incomingFields.some(
-      (field) => !allowedFields.includes(field),
-    )
-
-    if (invalidUpdate) {
-      throw new ForbiddenException(
-        'Employees cannot modify task details',
-      )
-    }
+ if (user.role === 'EMPLOYEE') {
+  if (task.assignedToId !== user.id) {
+    throw new ForbiddenException('You can only update your own tasks');
   }
+
+  // Must include status
+  if (dto.status === undefined) {
+    throw new ForbiddenException(
+      'Employees can only update task status'
+    );
+  }
+
+  // Only allow status field
+  const allowedFields = ['status'];
+
+  const incomingFields = Object.entries(dto)
+    .filter(([_, value]) => value !== undefined)
+    .map(([key]) => key);
+
+  const invalidUpdate = incomingFields.some(
+    (field) => !allowedFields.includes(field)
+  );
+
+  if (invalidUpdate) {
+    throw new ForbiddenException(
+      'Employees cannot modify task details'
+    );
+  }
+}
 
   ////////////////////////////////////////////////////////////
   // TEAM_LEAD RULES

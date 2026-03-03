@@ -159,7 +159,14 @@ export class TicketsService {
   },
 },
         comments: true,
-        statusHistory: true,
+        statusHistory: {
+          include: {
+            changedBy: true,
+          },
+          orderBy: {
+            changedAt: 'desc',
+          },
+        },
       },
     });
 
@@ -190,7 +197,37 @@ export class TicketsService {
       }
     }
 
-    return ticket;
+    // 🔥 Transform response to match frontend contract
+    // Construct plain object to avoid Prisma type conflicts
+    return {
+      id: ticket.id,
+      title: ticket.title,
+      description: ticket.description,
+      type: ticket.type,
+      priority: ticket.priority,
+      status: ticket.status,
+      projectId: ticket.projectId,
+      reporterId: ticket.reporterId,
+      assignedToId: ticket.assignedToId,
+      resolution: ticket.resolution,
+      isDeleted: ticket.isDeleted,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      resolvedAt: ticket.resolvedAt,
+      closedAt: ticket.closedAt,
+      reporter: ticket.reporter,
+      assignee: ticket.assignee,
+      project: ticket.project,
+      comments: ticket.comments,
+      statusHistory: ticket.statusHistory.map((entry) => ({
+        id: entry.id,
+        ticketId: entry.ticketId,
+        status: entry.newStatus,
+        changedById: entry.changedById,
+        changedBy: entry.changedBy,
+        createdAt: entry.changedAt,
+      })),
+    };
   }
 
   ////////////////////////////////////////////////////////////////

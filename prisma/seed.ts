@@ -126,6 +126,8 @@ await prisma.rolePermission.createMany({
     'employees.view',
     'reports.view',
     'tickets.view',
+    'tickets.assign',
+    'tickets.update.status',
     'tickets.comment',
   ];
 
@@ -135,6 +137,7 @@ await prisma.rolePermission.createMany({
     'projects.view',
     'projects.update.status',
     'tasks.view',
+    'tasks.update',
     'tickets.view',
     'tickets.create',
     'tickets.comment',
