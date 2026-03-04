@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
+import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
 import { AssignTicketDto } from './dto/assign-ticket.dto';
 import { UpdateTicketPriorityDto } from './dto/update-ticket-priority.dto';
@@ -56,6 +57,20 @@ export class TicketsController {
   }
 
   ////////////////////////////////////////////////////////////////
+  // UPDATE TICKET (REPORTER CAN UPDATE THEIR OWN TICKETS)
+  ////////////////////////////////////////////////////////////////
+
+  @Permissions('tickets.update')
+  @Patch(':id')
+  update(
+    @Req() req,
+    @Param('id') id: string,
+    @Body() dto: UpdateTicketDto,
+  ) {
+    return this.ticketsService.update(req.user, id, dto);
+  }
+
+  ////////////////////////////////////////////////////////////////
   // ASSIGN TICKET (ADMIN ONLY)
   ////////////////////////////////////////////////////////////////
 
@@ -68,6 +83,16 @@ assign(
 ) {
   return this.ticketsService.assign(req.user, id, dto);
 }
+
+  ////////////////////////////////////////////////////////////////
+  // SELF-ASSIGN TICKET (EMPLOYEE CAN ASSIGN TO THEMSELVES)
+  ////////////////////////////////////////////////////////////////
+
+  @Permissions('tickets.self_assign')
+  @Patch(':id/self-assign')
+  selfAssign(@Req() req, @Param('id') id: string) {
+    return this.ticketsService.selfAssign(req.user, id);
+  }
 
   ////////////////////////////////////////////////////////////////
   // UPDATE PRIORITY (ADMIN ONLY)

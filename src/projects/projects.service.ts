@@ -131,7 +131,14 @@ export class ProjectsService {
           lead: {
             select: { id: true, firstName: true, lastName: true },
           },
-          members: { select: { userId: true } },
+          members: { 
+            select: { 
+              userId: true,
+              user: {
+                select: { id: true, firstName: true, lastName: true }
+              }
+            } 
+          },
           tasks: {
             where: { isDeleted: false },
             select: { status: true },
@@ -167,6 +174,7 @@ if (project.status === 'COMPLETED' || project.status === 'ARCHIVED') {
         progress,
         endDate: project.endDate,
         lead: project.lead,
+        members: project.members,
         teamSize: project.members.length,
       };
     });

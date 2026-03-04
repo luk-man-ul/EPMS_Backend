@@ -1,5 +1,5 @@
-import { IsOptional, IsEnum, IsUUID, IsNumberString } from 'class-validator';
-import { TicketStatus, Priority } from '@prisma/client';
+import { IsOptional, IsEnum, IsUUID, IsNumberString, IsString } from 'class-validator';
+import { TicketStatus, Priority, TicketType } from '@prisma/client';
 
 export class TicketFilterDto {
   @IsOptional()
@@ -11,13 +11,20 @@ export class TicketFilterDto {
   priority?: Priority;
 
   @IsOptional()
+  @IsEnum(TicketType)
+  type?: TicketType;
+
+  @IsOptional()
   @IsUUID()
   projectId?: string;
 
-  // 🔥 ADD THIS
   @IsOptional()
   @IsUUID()
   assignedToId?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
 
   @IsOptional()
   @IsNumberString()

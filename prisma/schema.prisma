@@ -284,6 +284,7 @@ model Task {
 
   statusHistory TaskStatusHistory[]
   timeLogs      TimeLog[]
+  tickets       Ticket[]    // Reverse relation for tickets linked to this task
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -315,6 +316,7 @@ model Ticket {
   id            String       @id @default(uuid())
 
   projectId     String
+  taskId        String?      // Optional link to task
   title         String
   description   String
   type          TicketType
@@ -335,6 +337,7 @@ model Ticket {
   isDeleted     Boolean      @default(false)
 
   project       Project @relation(fields: [projectId], references: [id])
+  task          Task?   @relation(fields: [taskId], references: [id])
   reporter      User     @relation("TicketReporter", fields: [reporterId], references: [id])
   assignee      User?    @relation("TicketAssignee", fields: [assignedToId], references: [id])
 
@@ -349,6 +352,7 @@ model Ticket {
   @@index([reporterId])
   @@index([assignedToId])
   @@index([projectId])
+  @@index([taskId])
 }
 
 //////////////////////////////////////////////////////

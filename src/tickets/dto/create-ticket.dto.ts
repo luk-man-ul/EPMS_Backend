@@ -6,6 +6,10 @@ export class CreateTicketDto {
   @IsUUID()
   projectId?: string;
 
+  @IsOptional()
+  @IsUUID()
+  taskId?: string;
+
   @IsString()
   title: string;
 
@@ -18,4 +22,8 @@ export class CreateTicketDto {
   @IsOptional()
   @IsEnum(Priority)
   priority?: Priority;
+
+  @IsOptional()
+  @IsUUID()
+  assignedToId?: string;
 }
