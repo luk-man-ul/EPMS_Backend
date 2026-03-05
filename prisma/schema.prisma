@@ -24,12 +24,19 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum TaskType {
+  ASSIGNED
+  SELF_WORK
+}
+
 enum TaskStatus {
+  PROPOSED
   TODO
   IN_PROGRESS
   REVIEW
   COMPLETED
   CANCELLED
+  REJECTED
 }
 
 enum Priority {
@@ -113,6 +120,7 @@ model User {
   // Task relations
   assignedTasks   Task[]    @relation("TaskAssignee")
   createdTasks    Task[]    @relation("TaskCreator")
+  approvedTasks   Task[]    @relation("TaskApprover")
   changedTaskStatuses TaskStatusHistory[] @relation("TaskStatusChanger")
 
   // Ticket relations
@@ -267,8 +275,16 @@ model Task {
   priority      Priority    @default(MEDIUM)
   status        TaskStatus  @default(TODO)
 
+  // Task type classification
+  type          TaskType    @default(ASSIGNED)
+
   assignedToId  String?
   createdById   String
+
+  // Approval metadata
+  approvedById  String?
+  approvedAt    DateTime?
+  rejectionReason String?
 
   dueDate       DateTime?
   estimatedHrs  Float?
@@ -281,6 +297,7 @@ model Task {
   project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assignee      User?   @relation("TaskAssignee", fields: [assignedToId], references: [id])
   creator       User    @relation("TaskCreator", fields: [createdById], references: [id])
+  approvedBy    User?   @relation("TaskApprover", fields: [approvedById], references: [id])
 
   statusHistory TaskStatusHistory[]
   timeLogs      TimeLog[]
@@ -294,6 +311,8 @@ model Task {
   @@index([status])
   @@index([priority])
   @@index([dueDate])
+  @@index([type])
+  @@index([approvedById])
 }
 
 model TaskStatusHistory {

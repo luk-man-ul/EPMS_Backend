@@ -64,6 +64,7 @@ const permissionsData = [
   { code: 'tasks.update', module: 'tasks' },
   { code: 'tasks.create', module: 'tasks' },
   { code: 'tasks.delete', module: 'tasks' },
+  { code: 'tasks.approve', module: 'tasks' },
 
   { code: 'finance.view', module: 'finance' },
   { code: 'reports.view', module: 'reports' },
@@ -125,6 +126,7 @@ await prisma.rolePermission.createMany({
     'tasks.create', 
     'tasks.update',
     'tasks.delete',
+    'tasks.approve', // Added for self-work approval
     'employees.view',
     'reports.view',
     'tickets.view',
@@ -142,6 +144,7 @@ await prisma.rolePermission.createMany({
     'projects.view',
     'projects.update.status',
     'tasks.view',
+    'tasks.create', // Added for self-work task creation
     'tasks.update',
     'tickets.view',
     'tickets.create',
