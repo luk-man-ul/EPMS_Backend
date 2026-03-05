@@ -14,6 +14,8 @@ import { PermissionsModule } from './permissions/permissions.module'
 import { TasksModule } from './tasks/tasks.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { TicketWorkflowService } from './tickets/ticket-workflow.service';
+import { AttendanceModule } from './attendance/attendance.module';
+import { LeaveModule } from './leave/leave.module';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { TicketWorkflowService } from './tickets/ticket-workflow.service';
     PermissionsModule,
     TasksModule,
     TicketsModule,
+    AttendanceModule,
+    LeaveModule,
   ],
   controllers: [AppController],
   providers: [
