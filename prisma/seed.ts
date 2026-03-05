@@ -82,6 +82,16 @@ const permissionsData = [
   { code: 'tickets.update.status', module: 'tickets',},
   { code: 'tickets.delete', module: 'tickets',},
   { code: 'tickets.comment', module: 'tickets',},
+
+  { code: 'attendance.view', module: 'attendance' },
+  { code: 'attendance.create', module: 'attendance' },
+  { code: 'attendance.update', module: 'attendance' },
+  { code: 'attendance.viewAll', module: 'attendance' },
+
+  { code: 'leave.view', module: 'leave' },
+  { code: 'leave.create', module: 'leave' },
+  { code: 'leave.approve', module: 'leave' },
+  { code: 'leave.viewAll', module: 'leave' },
 ];
 
 const permissionMap: Record<string, string> = {};
@@ -136,6 +146,10 @@ await prisma.rolePermission.createMany({
     'tickets.assign',
     'tickets.update.status',
     'tickets.comment',
+    'attendance.view',
+    'attendance.viewAll',
+    'leave.view',
+    'leave.approve',
   ];
 
   // EMPLOYEE DEFAULT PERMISSIONS
@@ -153,6 +167,10 @@ await prisma.rolePermission.createMany({
     'tickets.self_assign',
     'tickets.comment',
     'tickets.update.status',
+    'attendance.view',
+    'attendance.create',
+    'leave.view',
+    'leave.create',
   ];
 
   // Clear existing mappings (safe reset)
