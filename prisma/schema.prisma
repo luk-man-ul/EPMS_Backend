@@ -142,6 +142,7 @@ model User {
   approvedLeaves  LeaveRequest[] @relation("LeaveApprover")
 
   attendance      Attendance[]
+  attendanceSessions AttendanceSession[]
 
   // System
   notifications   Notification[]
@@ -441,6 +442,20 @@ model Attendance {
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+}
+
+model AttendanceSession {
+  id        String    @id @default(uuid())
+  userId    String
+  checkIn   DateTime
+  checkOut  DateTime?
+  latitude  Float?
+  longitude Float?
+  createdAt DateTime  @default(now())
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, checkIn])
 }
 
 model LeaveRequest {
