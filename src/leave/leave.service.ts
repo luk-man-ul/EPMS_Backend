@@ -56,9 +56,9 @@ export class LeaveService {
       status: 'PENDING',
     };
 
-    const userRoles = user.roles.map((r: any) => r.role.name);
+    const userRole = user.role;
     
-    if (userRoles.includes('TEAM_LEAD') && !userRoles.includes('ADMIN')) {
+    if (userRole === 'TEAM_LEAD') {
       const teamMemberIds = await this.getTeamMemberIds(user.id);
       where.userId = { in: teamMemberIds };
     }
@@ -96,9 +96,9 @@ export class LeaveService {
       throw new BadRequestException('Leave request is not in PENDING status and cannot be approved');
     }
 
-    const userRoles = user.roles.map((r: any) => r.role.name);
-    const isAdmin = userRoles.includes('ADMIN');
-    const isTeamLead = userRoles.includes('TEAM_LEAD') &&
+    const userRole = user.role;
+    const isAdmin = userRole === 'ADMIN';
+    const isTeamLead = userRole === 'TEAM_LEAD' &&
       leave.user.projectMembers.some((pm: any) => pm.project.leadId === user.id);
 
     if (!isAdmin && !isTeamLead) {
@@ -145,9 +145,9 @@ export class LeaveService {
       throw new BadRequestException('Leave request is not in PENDING status and cannot be rejected');
     }
 
-    const userRoles = user.roles.map((r: any) => r.role.name);
-    const isAdmin = userRoles.includes('ADMIN');
-    const isTeamLead = userRoles.includes('TEAM_LEAD') &&
+    const userRole = user.role;
+    const isAdmin = userRole === 'ADMIN';
+    const isTeamLead = userRole === 'TEAM_LEAD' &&
       leave.user.projectMembers.some((pm: any) => pm.project.leadId === user.id);
 
     if (!isAdmin && !isTeamLead) {
@@ -175,11 +175,11 @@ export class LeaveService {
   async findAll(filters: any, user: any) {
     const where: Prisma.LeaveRequestWhereInput = {};
 
-    const userRoles = user.roles.map((r: any) => r.role.name);
+    const userRole = user.role;
     
-    if (userRoles.includes('EMPLOYEE') && !userRoles.includes('TEAM_LEAD') && !userRoles.includes('ADMIN')) {
+    if (userRole === 'EMPLOYEE') {
       where.userId = user.id;
-    } else if (userRoles.includes('TEAM_LEAD') && !userRoles.includes('ADMIN')) {
+    } else if (userRole === 'TEAM_LEAD') {
       const teamMemberIds = await this.getTeamMemberIds(user.id);
       where.userId = { in: teamMemberIds };
     }
@@ -198,9 +198,14 @@ export class LeaveService {
     } else if (filters.endDate) {
       where.endDate = { lte: new Date(filters.endDate) };
     }
-    if (filters.userId && !userRoles.includes('EMPLOYEE')) {
+    if (filters.userId && userRole !== 'EMPLOYEE') {
       where.userId = filters.userId;
     }
+
+    // Convert pagination parameters to numbers
+    const pageNumber = Number(filters.page) || 1;
+    const limitNumber = Number(filters.limit) || 20;
+    const skip = (pageNumber - 1) * limitNumber;
 
     const [data, total] = await Promise.all([
       this.prisma.leaveRequest.findMany({
@@ -214,8 +219,8 @@ export class LeaveService {
           },
         },
         orderBy: { createdAt: 'desc' },
-        skip: (filters.page - 1) * filters.limit,
-        take: filters.limit,
+        skip: skip,
+        take: limitNumber,
       }),
       this.prisma.leaveRequest.count({ where }),
     ]);
@@ -223,9 +228,9 @@ export class LeaveService {
     return {
       data,
       total,
-      page: filters.page,
-      limit: filters.limit,
-      totalPages: Math.ceil(total / filters.limit),
+      page: pageNumber,
+      limit: limitNumber,
+      totalPages: Math.ceil(total / limitNumber),
     };
   }
 

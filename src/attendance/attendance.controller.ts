@@ -43,6 +43,12 @@ export class AttendanceController {
   }
 
   @Permissions('attendance.view')
+  @Get('today')
+  getTodayAttendance(@Req() req) {
+    return this.attendanceService.findTodayAttendance(req.user.id);
+  }
+
+  @Permissions('attendance.view')
   @Get()
   findAll(@Query() filters: AttendanceFilterDto, @Req() req) {
     return this.attendanceService.findAll(filters, req.user);
