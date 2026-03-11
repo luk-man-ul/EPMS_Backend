@@ -626,13 +626,6 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   if (!task) {
     throw new NotFoundException('Task not found')
   }
-  console.log('---- UPDATE DEBUG ----');
-console.log('User Role:', user.role);
-console.log('User ID:', user.id);
-console.log('Task AssignedTo:', task.assignedToId);
-console.log('Old Status:', task.status);
-console.log('Incoming DTO:', dto);
-console.log('Incoming DTO:', JSON.stringify(dto));
 
   ////////////////////////////////////////////////////////////
   // EMPLOYEE RULES
