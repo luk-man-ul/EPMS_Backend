@@ -30,9 +30,7 @@ export class PermissionGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    // 🔥 FIXED: ADMIN bypass (your user has "role", not "roles")
-    console.log('PermissionGuard user:', user);
-
+    // ADMIN bypass
     if (user.role === 'ADMIN') {
       return true;
     }
