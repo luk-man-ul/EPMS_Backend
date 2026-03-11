@@ -6,10 +6,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
+import { ChatService } from '../chat/chat.service';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private chatService: ChatService,
+  ) {}
 
   ////////////////////////////////////////////////////////////
   // CREATE USER
@@ -66,6 +70,9 @@ export class UsersService {
         skills: { include: { skill: true } },
       },
     });
+
+    // Add new user to company chat room
+    await this.chatService.addUserToCompanyRoom(user.id);
 
     return {
       message: 'User created successfully',
