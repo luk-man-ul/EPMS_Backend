@@ -9,12 +9,16 @@ import { ProjectStatus } from '@prisma/client';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectWorkflowService } from './project-workflow.service';
+import { ChatService } from '../chat/chat.service';
 
 @Injectable()
 export class ProjectsService {
   private readonly workflowService: ProjectWorkflowService;
 
-  constructor(private prisma: PrismaService) {
+  constructor(
+    private prisma: PrismaService,
+    private chatService: ChatService,
+  ) {
     this.workflowService = new ProjectWorkflowService();
   }
 
@@ -82,6 +86,9 @@ export class ProjectsService {
 
       return created;
     });
+
+    // Create team chat room for the new project
+    await this.chatService.ensureTeamRoom(project.id);
 
     return {
       message: 'Project created successfully',
@@ -455,6 +462,11 @@ private async performProjectUpdate(
       },
     },
   });
+
+  // Sync team chat room members if project members were updated
+  if (uniqueMembers) {
+    await this.chatService.ensureTeamRoom(id);
+  }
 
   return this.formatProject(updatedProject);
 }
