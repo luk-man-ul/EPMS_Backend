@@ -40,6 +40,16 @@ export class AttendanceService {
     return this.sessionService.getAllSessions(filters, user);
   }
 
+  async midnightAutoCheckout() {
+    // Delegate to session service
+    return this.sessionService.midnightAutoCheckout();
+  }
+
+  async autoCheckoutLongSessions() {
+    // Delegate to session service
+    return this.sessionService.autoCheckoutLongSessions();
+  }
+
   private async getTeamMemberIds(teamLeadId: string): Promise<string[]> {
     const projects = await this.prisma.project.findMany({
       where: { leadId: teamLeadId },

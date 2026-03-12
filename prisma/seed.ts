@@ -148,8 +148,10 @@ await prisma.rolePermission.createMany({
     'tickets.comment',
     'attendance.view',
     'attendance.viewAll',
+    'attendance.create',
     'leave.view',
     'leave.approve',
+    'leave.create',
   ];
 
   // EMPLOYEE DEFAULT PERMISSIONS

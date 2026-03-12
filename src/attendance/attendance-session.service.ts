@@ -1,17 +1,82 @@
 import {
   Injectable,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AttendanceSessionService {
+  private readonly logger = new Logger(AttendanceSessionService.name);
+  
   // Office coordinates
   private readonly OFFICE_LATITUDE = 11.982748317280704;
   private readonly OFFICE_LONGITUDE = 75.36459629666871;
   private readonly ALLOWED_RADIUS_METERS = 250;
+  private readonly MAX_SESSION_HOURS = 12;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {
+    // Run recovery on service initialization
+    this.logger.log('AttendanceSessionService initialized - starting recovery process');
+    this.recoverOldSessions().catch(err => {
+      this.logger.error('Failed to recover old sessions on startup', err.stack);
+    });
+  }
+
+  /**
+   * PART 1: Fix existing broken records
+   * Auto-close any sessions that are still open from previous days
+   */
+  private async recoverOldSessions() {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      this.logger.log(`Starting recovery process - checking for sessions before ${today.toISOString()}`);
+
+      const oldOpenSessions = await this.prisma.attendanceSession.findMany({
+        where: {
+          checkOut: null,
+          checkIn: {
+            lt: today,
+          },
+        },
+        include: {
+          user: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      });
+
+      if (oldOpenSessions.length > 0) {
+        this.logger.warn(`Found ${oldOpenSessions.length} old open sessions to recover`);
+
+        for (const session of oldOpenSessions) {
+          // Set checkout to end of that day (23:59:59)
+          const endOfDay = new Date(session.checkIn);
+          endOfDay.setHours(23, 59, 59, 999);
+
+          await this.prisma.attendanceSession.update({
+            where: { id: session.id },
+            data: { checkOut: endOfDay },
+          });
+
+          this.logger.log(
+            `Recovered broken attendance session from previous day - ` +
+            `User: ${session.user.email}, Session ID: ${session.id}, ` +
+            `CheckIn: ${session.checkIn.toISOString()}, CheckOut set to: ${endOfDay.toISOString()}`
+          );
+        }
+
+        this.logger.log(`Recovery complete - ${oldOpenSessions.length} sessions recovered`);
+      } else {
+        this.logger.log('No old open sessions found - database is clean');
+      }
+    } catch (error) {
+      this.logger.error('Error during recovery process', error.stack);
+      throw error;
+    }
+  }
 
   /**
    * Calculate distance between two coordinates using Haversine formula
@@ -38,8 +103,11 @@ export class AttendanceSessionService {
   }
 
   async checkIn(userId: string, latitude?: number, longitude?: number) {
+    this.logger.log(`Check-in attempt - User: ${userId}, Location: (${latitude}, ${longitude})`);
+
     // Validate location is provided
     if (!latitude || !longitude) {
+      this.logger.warn(`Check-in rejected - Missing location data for user ${userId}`);
       throw new BadRequestException('Location is required for check-in');
     }
 
@@ -51,8 +119,13 @@ export class AttendanceSessionService {
       this.OFFICE_LONGITUDE,
     );
 
+    this.logger.log(`Distance from office: ${distance.toFixed(2)} meters (allowed: ${this.ALLOWED_RADIUS_METERS}m)`);
+
     // Enforce geofencing
     if (distance > this.ALLOWED_RADIUS_METERS) {
+      this.logger.warn(
+        `Check-in rejected - User ${userId} is ${distance.toFixed(2)}m from office (limit: ${this.ALLOWED_RADIUS_METERS}m)`
+      );
       throw new BadRequestException(
         `You are outside the allowed office area. You must be within ${this.ALLOWED_RADIUS_METERS} meters of the office to check in.`,
       );
@@ -64,14 +137,52 @@ export class AttendanceSessionService {
         userId,
         checkOut: null,
       },
+      orderBy: {
+        checkIn: 'desc',
+      },
     });
 
     if (activeSession) {
-      throw new BadRequestException('You must check out before checking in again.');
+      // Use ISO date strings for reliable date comparison (timezone-safe)
+      const now = new Date();
+      const todayDateString = now.toISOString().split('T')[0]; // "2026-03-12"
+      const sessionDateString = activeSession.checkIn.toISOString().split('T')[0]; // "2026-03-11"
+
+      this.logger.log(
+        `Active session found - Session ID: ${activeSession.id}, ` +
+        `CheckIn: ${activeSession.checkIn.toISOString()}, ` +
+        `Today: ${todayDateString}, Session Date: ${sessionDateString}`
+      );
+
+      // CASE A: Session started today - block check-in
+      if (todayDateString === sessionDateString) {
+        this.logger.warn(
+          `Check-in rejected - User ${userId} already has an active session today (Session ID: ${activeSession.id})`
+        );
+        throw new BadRequestException('You must check out before checking in again.');
+      }
+
+      // CASE B: Session started on previous day - auto-close it
+      this.logger.log(`Auto-closing previous day session for user ${userId} (Session ID: ${activeSession.id})`);
+      
+      // Set checkout to end of that day (23:59:59)
+      const endOfSessionDay = new Date(activeSession.checkIn);
+      endOfSessionDay.setHours(23, 59, 59, 999);
+
+      await this.prisma.attendanceSession.update({
+        where: { id: activeSession.id },
+        data: { checkOut: endOfSessionDay },
+      });
+
+      this.logger.log(
+        `Auto-closed previous day session during check-in - ` +
+        `User: ${userId}, Session ID: ${activeSession.id}, ` +
+        `CheckOut set to: ${endOfSessionDay.toISOString()}`
+      );
     }
 
     // Create new session with location
-    return this.prisma.attendanceSession.create({
+    const newSession = await this.prisma.attendanceSession.create({
       data: {
         userId,
         checkIn: new Date(),
@@ -84,9 +195,18 @@ export class AttendanceSessionService {
         },
       },
     });
+
+    this.logger.log(
+      `Check-in successful - User: ${userId}, Session ID: ${newSession.id}, ` +
+      `Time: ${newSession.checkIn.toISOString()}`
+    );
+
+    return newSession;
   }
 
   async checkOut(userId: string) {
+    this.logger.log(`Check-out attempt - User: ${userId}`);
+
     // Find the latest active session
     const activeSession = await this.prisma.attendanceSession.findFirst({
       where: {
@@ -99,19 +219,158 @@ export class AttendanceSessionService {
     });
 
     if (!activeSession) {
+      this.logger.warn(`Check-out rejected - No active session found for user ${userId}`);
       throw new BadRequestException('No active check-in found.');
     }
 
+    this.logger.log(
+      `Active session found - Session ID: ${activeSession.id}, ` +
+      `CheckIn: ${activeSession.checkIn.toISOString()}`
+    );
+
     // Update with checkout time
-    return this.prisma.attendanceSession.update({
+    const checkOutTime = new Date();
+    const updatedSession = await this.prisma.attendanceSession.update({
       where: { id: activeSession.id },
-      data: { checkOut: new Date() },
+      data: { checkOut: checkOutTime },
       include: {
         user: {
           select: { firstName: true, lastName: true, email: true },
         },
       },
     });
+
+    const duration = (checkOutTime.getTime() - activeSession.checkIn.getTime()) / (1000 * 60 * 60);
+    
+    this.logger.log(
+      `Check-out successful - User: ${userId}, Session ID: ${updatedSession.id}, ` +
+      `Duration: ${duration.toFixed(2)} hours, CheckOut: ${checkOutTime.toISOString()}`
+    );
+
+    return updatedSession;
+  }
+
+  /**
+   * PART 4: Midnight auto-checkout job
+   * This should be called by a cron job daily at 23:59
+   * Closes all sessions that are still open from previous days
+   */
+  async midnightAutoCheckout() {
+    this.logger.log('Midnight auto-checkout job started');
+
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const sessionsToClose = await this.prisma.attendanceSession.findMany({
+        where: {
+          checkOut: null,
+          checkIn: {
+            lt: today,
+          },
+        },
+        include: {
+          user: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      });
+
+      if (sessionsToClose.length > 0) {
+        this.logger.warn(`Midnight job: Found ${sessionsToClose.length} sessions to auto-close`);
+
+        for (const session of sessionsToClose) {
+          // Set checkout to 23:59:59 of the checkIn day
+          const endOfDay = new Date(session.checkIn);
+          endOfDay.setHours(23, 59, 59, 999);
+
+          await this.prisma.attendanceSession.update({
+            where: { id: session.id },
+            data: { checkOut: endOfDay },
+          });
+
+          this.logger.log(
+            `Auto checkout executed by midnight job - ` +
+            `User: ${session.user.email}, Session ID: ${session.id}, ` +
+            `CheckIn: ${session.checkIn.toISOString()}, CheckOut set to: ${endOfDay.toISOString()}`
+          );
+        }
+
+        this.logger.log(`Midnight auto-checkout completed - ${sessionsToClose.length} sessions closed`);
+      } else {
+        this.logger.log('Midnight job: No sessions to close');
+      }
+
+      return {
+        message: 'Midnight auto-checkout completed',
+        sessionsClosed: sessionsToClose.length,
+      };
+    } catch (error) {
+      this.logger.error('Error during midnight auto-checkout', error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * PART 3: Auto-checkout for sessions exceeding maximum duration
+   * Checks and closes sessions that have been open for more than MAX_SESSION_HOURS
+   */
+  async autoCheckoutLongSessions() {
+    this.logger.log(`Auto-checkout long sessions job started (max duration: ${this.MAX_SESSION_HOURS} hours)`);
+
+    try {
+      const maxDuration = this.MAX_SESSION_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
+      const cutoffTime = new Date(Date.now() - maxDuration);
+
+      const longSessions = await this.prisma.attendanceSession.findMany({
+        where: {
+          checkOut: null,
+          checkIn: {
+            lt: cutoffTime,
+          },
+        },
+        include: {
+          user: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      });
+
+      if (longSessions.length > 0) {
+        this.logger.warn(
+          `Found ${longSessions.length} sessions exceeding ${this.MAX_SESSION_HOURS} hours`
+        );
+
+        for (const session of longSessions) {
+          // Set checkout to checkIn + MAX_SESSION_HOURS
+          const autoCheckoutTime = new Date(session.checkIn.getTime() + maxDuration);
+
+          await this.prisma.attendanceSession.update({
+            where: { id: session.id },
+            data: { checkOut: autoCheckoutTime },
+          });
+
+          this.logger.log(
+            `Session auto closed due to max duration exceeded - ` +
+            `User: ${session.user.email}, Session ID: ${session.id}, ` +
+            `CheckIn: ${session.checkIn.toISOString()}, ` +
+            `CheckOut set to: ${autoCheckoutTime.toISOString()} (${this.MAX_SESSION_HOURS}h limit)`
+          );
+        }
+
+        this.logger.log(`Auto-checkout long sessions completed - ${longSessions.length} sessions closed`);
+      } else {
+        this.logger.log('No long-running sessions found');
+      }
+
+      return {
+        message: 'Auto-checkout for long sessions completed',
+        sessionsClosed: longSessions.length,
+      };
+    } catch (error) {
+      this.logger.error('Error during auto-checkout long sessions', error.stack);
+      throw error;
+    }
   }
 
   async getTodaySessions(userId: string) {

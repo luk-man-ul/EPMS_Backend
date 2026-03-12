@@ -53,4 +53,18 @@ export class AttendanceController {
   findAll(@Query() filters: AttendanceFilterDto, @Req() req) {
     return this.attendanceService.findAll(filters, req.user);
   }
+
+  @Permissions('attendance.admin')
+  @Post('admin/midnight-auto-checkout')
+  @HttpCode(HttpStatus.OK)
+  midnightAutoCheckout() {
+    return this.attendanceService.midnightAutoCheckout();
+  }
+
+  @Permissions('attendance.admin')
+  @Post('admin/auto-checkout-long-sessions')
+  @HttpCode(HttpStatus.OK)
+  autoCheckoutLongSessions() {
+    return this.attendanceService.autoCheckoutLongSessions();
+  }
 }
