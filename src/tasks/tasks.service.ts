@@ -576,16 +576,6 @@ async findOne(id: string, user: any) {
         },
         orderBy: { changedAt: 'desc' },
       },
-      timeLogs: {
-        select: {
-          id: true,
-          hours: true,
-          description: true,
-          logDate: true,
-          status: true,
-        },
-        orderBy: { logDate: 'desc' },
-      },
     },
   })
 
@@ -791,16 +781,6 @@ return this.prisma.task.findUnique({
         },
       },
       orderBy: { changedAt: 'desc' },
-    },
-    timeLogs: {
-      select: {
-        id: true,
-        hours: true,
-        description: true,
-        logDate: true,
-        status: true,
-      },
-      orderBy: { logDate: 'desc' },
     },
   },
 })

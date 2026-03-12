@@ -129,10 +129,6 @@ model User {
   ticketComments      TicketComment[]
   ticketStatusChanges TicketStatusHistory[]
 
-  // Time logs
-  timeLogs         TimeLog[] @relation("TimeLogUser")
-  approvedTimeLogs TimeLog[] @relation("TimeLogApprover")
-
   // Self work
   selfWorks         SelfWork[] @relation("SelfWorkOwner")
   approvedSelfWorks SelfWork[] @relation("SelfWorkApprover")
@@ -244,7 +240,6 @@ model Project {
   members   ProjectMember[]
   tasks     Task[]
   tickets   Ticket[]
-  timeLogs  TimeLog[]
   selfWorks SelfWork[]
   finance   ProjectFinance?
   channels  Channel[]
@@ -304,7 +299,6 @@ model Task {
   approvedBy User?   @relation("TaskApprover", fields: [approvedById], references: [id])
 
   statusHistory TaskStatusHistory[]
-  timeLogs      TimeLog[]
   tickets       Ticket[] // Reverse relation for tickets linked to this task
 
   createdAt DateTime @default(now())
@@ -376,34 +370,6 @@ model Ticket {
   @@index([assignedToId])
   @@index([projectId])
   @@index([taskId])
-}
-
-//////////////////////////////////////////////////////
-// TIME LOGS
-//////////////////////////////////////////////////////
-
-model TimeLog {
-  id           String         @id @default(uuid())
-  userId       String
-  projectId    String
-  taskId       String?
-  description  String
-  hours        Float
-  logDate      DateTime       @db.Date
-  status       ApprovalStatus @default(PENDING)
-  approvedById String?
-  approvedAt   DateTime?
-
-  user       User    @relation("TimeLogUser", fields: [userId], references: [id], onDelete: Cascade)
-  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  task       Task?   @relation(fields: [taskId], references: [id])
-  approvedBy User?   @relation("TimeLogApprover", fields: [approvedById], references: [id])
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([projectId])
-  @@index([status])
 }
 
 //////////////////////////////////////////////////////
