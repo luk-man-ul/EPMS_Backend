@@ -82,9 +82,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { success: false, error: 'Missing required fields' };
       }
 
-      // Verify membership
-      const isMember = await this.chatService.verifyRoomMembership(roomId, userId);
-      
+      // Admins can join any room; others must be members
+      const userRole = this.userRoles.get(userId) || 'EMPLOYEE';
+      const isMember =
+        userRole === 'ADMIN' ||
+        (await this.chatService.verifyRoomMembership(roomId, userId));
+
       if (!isMember) {
         this.logger.warn(`Join room denied: User ${userId} not a member of room ${roomId}`);
         client.emit('error', { message: 'You are not a member of this room' });
