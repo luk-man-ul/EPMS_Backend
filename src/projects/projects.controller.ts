@@ -11,6 +11,14 @@ import {
   UseGuards,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ProjectsService } from './projects.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -18,6 +26,8 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UpdateProjectStatusDto } from './dto/update-project-status.dto';
 
+@ApiTags('projects')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('projects')
 export class ProjectsController {
@@ -29,6 +39,9 @@ export class ProjectsController {
 
   @Permissions('projects.create')
   @Post()
+  @ApiOperation({ summary: 'Create a new project' })
+  @ApiResponse({ status: 201, description: 'Project created successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   async create(
     @Body() dto: CreateProjectDto,
     @Req() req: any,
@@ -42,6 +55,11 @@ export class ProjectsController {
 
   @Permissions('projects.view')
   @Get()
+  @ApiOperation({ summary: 'Get all projects with optional search and pagination' })
+  @ApiQuery({ name: 'search', required: false, description: 'Search by project name' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page', example: 10 })
+  @ApiResponse({ status: 200, description: 'Returns paginated list of projects' })
   async findAll(
     @Req() req: any,
     @Query('search') search?: string,
@@ -61,6 +79,8 @@ export class ProjectsController {
 
   @Permissions('projects.view')
   @Get('my')
+  @ApiOperation({ summary: 'Get projects assigned to the current user' })
+  @ApiResponse({ status: 200, description: 'Returns list of user projects' })
   async getMyProjects(@Req() req: any) {
     return this.projectsService.getMyProjects(req.user);
   }
@@ -71,6 +91,10 @@ export class ProjectsController {
 
   @Permissions('projects.view')
   @Get(':id')
+  @ApiOperation({ summary: 'Get a single project by ID' })
+  @ApiParam({ name: 'id', description: 'Project UUID' })
+  @ApiResponse({ status: 200, description: 'Returns project details' })
+  @ApiResponse({ status: 404, description: 'Project not found' })
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: any,
@@ -84,6 +108,9 @@ export class ProjectsController {
 
   @Permissions('projects.update')
   @Patch(':id')
+  @ApiOperation({ summary: 'Update project details' })
+  @ApiParam({ name: 'id', description: 'Project UUID' })
+  @ApiResponse({ status: 200, description: 'Project updated successfully' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProjectDto,
@@ -98,6 +125,9 @@ export class ProjectsController {
 
   @Permissions('projects.update.status')
   @Patch(':id/status')
+  @ApiOperation({ summary: 'Update project status' })
+  @ApiParam({ name: 'id', description: 'Project UUID' })
+  @ApiResponse({ status: 200, description: 'Project status updated' })
   async updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProjectStatusDto,
@@ -116,6 +146,9 @@ export class ProjectsController {
 
   @Permissions('projects.delete')
   @Delete(':id')
+  @ApiOperation({ summary: 'Delete a project' })
+  @ApiParam({ name: 'id', description: 'Project UUID' })
+  @ApiResponse({ status: 200, description: 'Project deleted successfully' })
   async remove(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: any,

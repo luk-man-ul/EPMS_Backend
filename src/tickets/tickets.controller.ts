@@ -10,6 +10,13 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
@@ -21,6 +28,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
+@ApiTags('tickets')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('tickets')
 export class TicketsController {
@@ -32,9 +41,11 @@ export class TicketsController {
 
   @Permissions('tickets.create')
   @Post()
+  @ApiOperation({ summary: 'Create a new ticket' })
+  @ApiResponse({ status: 201, description: 'Ticket created successfully' })
   create(@Req() req, @Body() dto: CreateTicketDto) {
-  return this.ticketsService.create(req.user, dto);
-}
+    return this.ticketsService.create(req.user, dto);
+  }
 
   ////////////////////////////////////////////////////////////////
   // GET ALL TICKETS (ROLE VISIBILITY CONTROLLED IN SERVICE)
@@ -42,6 +53,8 @@ export class TicketsController {
 
   @Permissions('tickets.view')
   @Get()
+  @ApiOperation({ summary: 'Get all tickets (role-filtered)' })
+  @ApiResponse({ status: 200, description: 'Returns paginated list of tickets' })
   findAll(@Req() req, @Query() filter: TicketFilterDto) {
     return this.ticketsService.findAll(req.user, filter);
   }
@@ -52,6 +65,10 @@ export class TicketsController {
 
   @Permissions('tickets.view')
   @Get(':id')
+  @ApiOperation({ summary: 'Get a single ticket by ID' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Returns ticket details' })
+  @ApiResponse({ status: 404, description: 'Ticket not found' })
   findOne(@Req() req, @Param('id') id: string) {
     return this.ticketsService.findOne(req.user, id);
   }
@@ -62,6 +79,9 @@ export class TicketsController {
 
   @Permissions('tickets.update')
   @Patch(':id')
+  @ApiOperation({ summary: 'Update ticket details' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket updated successfully' })
   update(
     @Req() req,
     @Param('id') id: string,
@@ -76,13 +96,16 @@ export class TicketsController {
 
   @Permissions('tickets.assign')
   @Patch(':id/assign')
-assign(
-  @Req() req,
-  @Param('id') id: string,
-  @Body() dto: AssignTicketDto,
-) {
-  return this.ticketsService.assign(req.user, id, dto);
-}
+  @ApiOperation({ summary: 'Assign ticket to a user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket assigned successfully' })
+  assign(
+    @Req() req,
+    @Param('id') id: string,
+    @Body() dto: AssignTicketDto,
+  ) {
+    return this.ticketsService.assign(req.user, id, dto);
+  }
 
   ////////////////////////////////////////////////////////////////
   // SELF-ASSIGN TICKET (EMPLOYEE CAN ASSIGN TO THEMSELVES)
@@ -90,6 +113,9 @@ assign(
 
   @Permissions('tickets.self_assign')
   @Patch(':id/self-assign')
+  @ApiOperation({ summary: 'Self-assign a ticket to the current user' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket self-assigned successfully' })
   selfAssign(@Req() req, @Param('id') id: string) {
     return this.ticketsService.selfAssign(req.user, id);
   }
@@ -100,6 +126,9 @@ assign(
 
   @Permissions('tickets.update.priority')
   @Patch(':id/priority')
+  @ApiOperation({ summary: 'Update ticket priority (Admin only)' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket priority updated' })
   updatePriority(
     @Param('id') id: string,
     @Body() dto: UpdateTicketPriorityDto,
@@ -113,23 +142,30 @@ assign(
 
   @Permissions('tickets.update.status')
   @Patch(':id/status')
-updateStatus(
-  @Req() req,
-  @Param('id') id: string,
-  @Body() dto: UpdateTicketStatusDto,
-) {
-  return this.ticketsService.updateStatus(req.user, id, dto);
-}
+  @ApiOperation({ summary: 'Update ticket status (workflow enforced)' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket status updated' })
+  updateStatus(
+    @Req() req,
+    @Param('id') id: string,
+    @Body() dto: UpdateTicketStatusDto,
+  ) {
+    return this.ticketsService.updateStatus(req.user, id, dto);
+  }
+
   ////////////////////////////////////////////////////////////////
   // SOFT DELETE (ADMIN ONLY)
   ////////////////////////////////////////////////////////////////
 
   @Permissions('tickets.delete')
   @Delete(':id')
-remove(
-  @Req() req,
-  @Param('id') id: string,
-) {
-  return this.ticketsService.remove(req.user, id);
-}
+  @ApiOperation({ summary: 'Soft delete a ticket (Admin only)' })
+  @ApiParam({ name: 'id', description: 'Ticket UUID' })
+  @ApiResponse({ status: 200, description: 'Ticket deleted successfully' })
+  remove(
+    @Req() req,
+    @Param('id') id: string,
+  ) {
+    return this.ticketsService.remove(req.user, id);
+  }
 }

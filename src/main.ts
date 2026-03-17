@@ -59,6 +59,8 @@ async function bootstrap() {
     .addTag('chat', 'Real-time chat')
     .addTag('files', 'File attachments')
     .addTag('health', 'Health check')
+    .addTag('admin', 'Admin dashboard')
+    .addTag('activities', 'Activity logs')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

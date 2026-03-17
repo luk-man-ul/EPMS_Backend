@@ -12,6 +12,14 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common'
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger'
 import { TasksService } from './tasks.service'
 import { CreateTaskDto } from './dto/create-task.dto'
 import { UpdateTaskDto } from './dto/update-task.dto'
@@ -24,6 +32,8 @@ import { ProjectMembershipGuard } from '../common/guards/project-membership.guar
 import { ApprovalAuthorityGuard } from '../common/guards/approval-authority.guard'
 import { Permissions } from '../common/decorators/permissions.decorator'
 
+@ApiTags('tasks')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('tasks')
 export class TasksController {
@@ -35,6 +45,9 @@ export class TasksController {
 
   @Permissions('tasks.create')
   @Post()
+  @ApiOperation({ summary: 'Create a new task' })
+  @ApiResponse({ status: 201, description: 'Task created successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   create(@Body() dto: CreateTaskDto, @Req() req) {
     return this.tasksService.create(dto, req.user)
   }
@@ -47,6 +60,8 @@ export class TasksController {
   @UseGuards(ProjectMembershipGuard)
   @Post('self-work')
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a self-work task (requires project membership)' })
+  @ApiResponse({ status: 201, description: 'Self-work task created, pending approval' })
   createSelfWork(@Body() dto: CreateSelfWorkDto, @Req() req) {
     return this.tasksService.createSelfWork(dto, req.user)
   }
@@ -57,12 +72,16 @@ export class TasksController {
 
   @Permissions('tasks.view')
   @Get('my')
+  @ApiOperation({ summary: 'Get tasks assigned to the current user' })
+  @ApiResponse({ status: 200, description: 'Returns list of user tasks' })
   getMyTasks(@Req() req) {
     return this.tasksService.findMyTasks(req.user)
   }
 
   @Permissions('tasks.view')
   @Get('dashboard/summary')
+  @ApiOperation({ summary: 'Get task dashboard summary for current user' })
+  @ApiResponse({ status: 200, description: 'Returns task summary stats' })
   getSummary(@Req() req) {
     return this.tasksService.getDashboardSummary(req.user)
   }
@@ -75,6 +94,9 @@ export class TasksController {
   @UseGuards(ApprovalAuthorityGuard)
   @Patch('pending-approvals/:id/approve')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve a self-work task' })
+  @ApiParam({ name: 'id', description: 'Task UUID' })
+  @ApiResponse({ status: 200, description: 'Self-work task approved' })
   approveSelfWork(@Param('id') id: string, @Req() req) {
     return this.tasksService.approveSelfWork(id, req.user)
   }
@@ -83,6 +105,9 @@ export class TasksController {
   @UseGuards(ApprovalAuthorityGuard)
   @Patch('pending-approvals/:id/reject')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a self-work task with reason' })
+  @ApiParam({ name: 'id', description: 'Task UUID' })
+  @ApiResponse({ status: 200, description: 'Self-work task rejected' })
   rejectSelfWork(
     @Param('id') id: string,
     @Body() dto: RejectSelfWorkDto,
@@ -93,6 +118,8 @@ export class TasksController {
 
   @Permissions('tasks.approve')
   @Get('pending-approvals')
+  @ApiOperation({ summary: 'Get all self-work tasks pending approval' })
+  @ApiResponse({ status: 200, description: 'Returns list of pending self-work tasks' })
   getPendingApprovals(@Req() req) {
     return this.tasksService.getPendingApprovals(req.user)
   }
@@ -103,6 +130,9 @@ export class TasksController {
 
   @Permissions('tasks.view')
   @Get('self-work-metrics')
+  @ApiOperation({ summary: 'Get self-work metrics for a project' })
+  @ApiQuery({ name: 'projectId', required: true, description: 'Project UUID' })
+  @ApiResponse({ status: 200, description: 'Returns self-work metrics' })
   getSelfWorkMetrics(@Query('projectId') projectId: string, @Req() req) {
     return this.tasksService.getSelfWorkMetrics(projectId, req.user)
   }
@@ -113,6 +143,8 @@ export class TasksController {
 
   @Permissions('tasks.view')
   @Get('status-breakdown')
+  @ApiOperation({ summary: 'Get task status breakdown for dashboard charts' })
+  @ApiResponse({ status: 200, description: 'Returns task counts by status' })
   getStatusBreakdown(@Req() req) {
     return this.tasksService.getStatusBreakdown(req.user)
   }
@@ -123,6 +155,8 @@ export class TasksController {
 
   @Permissions('tasks.view')
   @Get()
+  @ApiOperation({ summary: 'Get all tasks with filters and pagination' })
+  @ApiResponse({ status: 200, description: 'Returns paginated list of tasks' })
   findAll(@Query() query: TaskFilterDto, @Req() req) {
     return this.tasksService.findAll(query, req.user)
   }
@@ -133,6 +167,10 @@ export class TasksController {
 
   @Permissions('tasks.view')
   @Get(':id')
+  @ApiOperation({ summary: 'Get a single task by ID' })
+  @ApiParam({ name: 'id', description: 'Task UUID' })
+  @ApiResponse({ status: 200, description: 'Returns task details' })
+  @ApiResponse({ status: 404, description: 'Task not found' })
   findOne(@Param('id') id: string, @Req() req) {
     return this.tasksService.findOne(id, req.user)
   }
@@ -143,6 +181,9 @@ export class TasksController {
 
   @Permissions('tasks.update')
   @Patch(':id')
+  @ApiOperation({ summary: 'Update a task' })
+  @ApiParam({ name: 'id', description: 'Task UUID' })
+  @ApiResponse({ status: 200, description: 'Task updated successfully' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTaskDto,
@@ -157,6 +198,9 @@ export class TasksController {
 
   @Permissions('tasks.delete')
   @Delete(':id')
+  @ApiOperation({ summary: 'Soft delete a task' })
+  @ApiParam({ name: 'id', description: 'Task UUID' })
+  @ApiResponse({ status: 200, description: 'Task deleted successfully' })
   remove(@Param('id') id: string, @Req() req) {
     return this.tasksService.remove(id, req.user)
   }
