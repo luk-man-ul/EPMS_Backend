@@ -1,0 +1,20 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install dependencies (including devDependencies for ts-node, nest CLI, etc.)
+COPY package*.json ./
+COPY prisma ./prisma/
+COPY prisma.config.ts ./
+
+RUN npm ci
+
+# Generate Prisma client — reads datasource URL from prisma.config.ts (Prisma 7)
+# DATABASE_URL is not needed at generate time, only at runtime
+RUN npx prisma generate
+
+# Source code is mounted as a volume at runtime — no COPY src needed
+EXPOSE 3000
+
+# Push schema to DB (safe for dev — creates tables if missing) then start watch mode
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && npm run start:dev"]

@@ -1,15 +1,13 @@
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import * as bcrypt from 'bcrypt';
+require('dotenv/config');
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const bcrypt = require('bcrypt');
 
 const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL!,
+  connectionString: process.env.DATABASE_URL,
 });
 
-const prisma = new PrismaClient({
-  adapter,
-});
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   ////////////////////////////////////////////////////////////
@@ -43,89 +41,88 @@ async function main() {
     },
   });
 
- ////////////////////////////////////////////////////////////
-// 2️⃣ CREATE PERMISSIONS (WITH MODULE FIELD)
-////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////
+  // 2️⃣ CREATE PERMISSIONS
+  ////////////////////////////////////////////////////////////
 
-const permissionsData = [
-  { code: 'dashboard.view', module: 'dashboard' },
+  const permissionsData = [
+    { code: 'dashboard.view', module: 'dashboard' },
 
-  { code: 'employees.view', module: 'employees' },
-  { code: 'employees.create', module: 'employees' },
-  { code: 'employees.update', module: 'employees' },
+    { code: 'employees.view', module: 'employees' },
+    { code: 'employees.create', module: 'employees' },
+    { code: 'employees.update', module: 'employees' },
 
-  { code: 'projects.view', module: 'projects' },
-  { code: 'projects.create', module: 'projects' },
-  { code: 'projects.update', module: 'projects' },
-  { code: 'projects.update.status', module: 'projects' },
-  { code: 'projects.delete', module: 'projects' },
+    { code: 'projects.view', module: 'projects' },
+    { code: 'projects.create', module: 'projects' },
+    { code: 'projects.update', module: 'projects' },
+    { code: 'projects.update.status', module: 'projects' },
+    { code: 'projects.delete', module: 'projects' },
 
-  { code: 'tasks.view', module: 'tasks' },
-  { code: 'tasks.update', module: 'tasks' },
-  { code: 'tasks.create', module: 'tasks' },
-  { code: 'tasks.delete', module: 'tasks' },
-  { code: 'tasks.approve', module: 'tasks' },
+    { code: 'tasks.view', module: 'tasks' },
+    { code: 'tasks.update', module: 'tasks' },
+    { code: 'tasks.create', module: 'tasks' },
+    { code: 'tasks.delete', module: 'tasks' },
+    { code: 'tasks.approve', module: 'tasks' },
 
-  { code: 'finance.view', module: 'finance' },
-  { code: 'reports.view', module: 'reports' },
+    { code: 'finance.view', module: 'finance' },
+    { code: 'reports.view', module: 'reports' },
 
-  { code: 'settings.view', module: 'settings' },
-  { code: 'settings.update', module: 'settings' },
+    { code: 'settings.view', module: 'settings' },
+    { code: 'settings.update', module: 'settings' },
 
+    { code: 'tickets.view', module: 'tickets' },
+    { code: 'tickets.create', module: 'tickets' },
+    { code: 'tickets.update', module: 'tickets' },
+    { code: 'tickets.assign', module: 'tickets' },
+    { code: 'tickets.self_assign', module: 'tickets' },
+    { code: 'tickets.update.priority', module: 'tickets' },
+    { code: 'tickets.update.status', module: 'tickets' },
+    { code: 'tickets.delete', module: 'tickets' },
+    { code: 'tickets.comment', module: 'tickets' },
 
-  { code: 'tickets.view', module: 'tickets',},
-  { code: 'tickets.create', module: 'tickets',},
-  { code: 'tickets.update', module: 'tickets',},
-  { code: 'tickets.assign', module: 'tickets',},
-  { code: 'tickets.self_assign', module: 'tickets',},
-  { code: 'tickets.update.priority', module: 'tickets',},
-  { code: 'tickets.update.status', module: 'tickets',},
-  { code: 'tickets.delete', module: 'tickets',},
-  { code: 'tickets.comment', module: 'tickets',},
+    { code: 'attendance.view', module: 'attendance' },
+    { code: 'attendance.create', module: 'attendance' },
+    { code: 'attendance.update', module: 'attendance' },
+    { code: 'attendance.viewAll', module: 'attendance' },
 
-  { code: 'attendance.view', module: 'attendance' },
-  { code: 'attendance.create', module: 'attendance' },
-  { code: 'attendance.update', module: 'attendance' },
-  { code: 'attendance.viewAll', module: 'attendance' },
+    { code: 'leave.view', module: 'leave' },
+    { code: 'leave.create', module: 'leave' },
+    { code: 'leave.approve', module: 'leave' },
+    { code: 'leave.viewAll', module: 'leave' },
+  ];
 
-  { code: 'leave.view', module: 'leave' },
-  { code: 'leave.create', module: 'leave' },
-  { code: 'leave.approve', module: 'leave' },
-  { code: 'leave.viewAll', module: 'leave' },
-];
+  const permissionMap = {};
 
-const permissionMap: Record<string, string> = {};
+  for (const perm of permissionsData) {
+    const permission = await prisma.permission.upsert({
+      where: { code: perm.code },
+      update: {},
+      create: {
+        code: perm.code,
+        module: perm.module,
+      },
+    });
 
-for (const perm of permissionsData) {
-  const permission = await prisma.permission.upsert({
-    where: { code: perm.code },
-    update: {},
-    create: {
-      code: perm.code,
-      module: perm.module,
-    },
-  });
-
-  permissionMap[perm.code] = permission.id;
-}
-
+    permissionMap[perm.code] = permission.id;
+  }
 
   ////////////////////////////////////////////////////////////
   // 3️⃣ DEFAULT PERMISSION MATRIX
   ////////////////////////////////////////////////////////////
 
   // ADMIN gets ALL permissions
-await prisma.rolePermission.deleteMany({
-  where: { roleId: adminRole.id },
-})
+  await prisma.rolePermission.deleteMany({
+    where: { roleId: adminRole.id },
+  });
 
-await prisma.rolePermission.createMany({
-  data: Object.values(permissionMap).map((permissionId) => ({
-    roleId: adminRole.id,
-    permissionId,
-  })),
-  skipDuplicates: true,
-})
+  await prisma.rolePermission.createMany({
+    data: Object.values(permissionMap).map((permissionId) => ({
+      roleId: adminRole.id,
+      permissionId,
+    })),
+    skipDuplicates: true,
+  });
+
   // TEAM LEAD DEFAULT PERMISSIONS
   const teamLeadPermissions = [
     'dashboard.view',
@@ -133,10 +130,10 @@ await prisma.rolePermission.createMany({
     'projects.update',
     'projects.update.status',
     'tasks.view',
-    'tasks.create', 
+    'tasks.create',
     'tasks.update',
     'tasks.delete',
-    'tasks.approve', // Added for self-work approval
+    'tasks.approve',
     'employees.view',
     'reports.view',
     'tickets.view',
@@ -160,7 +157,7 @@ await prisma.rolePermission.createMany({
     'projects.view',
     'projects.update.status',
     'tasks.view',
-    'tasks.create', // Added for self-work task creation
+    'tasks.create',
     'tasks.update',
     'tickets.view',
     'tickets.create',
@@ -175,7 +172,7 @@ await prisma.rolePermission.createMany({
     'leave.create',
   ];
 
-  // Clear existing mappings (safe reset)
+  // Clear existing mappings
   await prisma.rolePermission.deleteMany({
     where: {
       roleId: {
@@ -186,19 +183,23 @@ await prisma.rolePermission.createMany({
 
   // Insert TEAM LEAD permissions
   await prisma.rolePermission.createMany({
-    data: teamLeadPermissions.map((code) => ({
-      roleId: teamLeadRole.id,
-      permissionId: permissionMap[code],
-    })),
+    data: teamLeadPermissions
+      .filter(code => permissionMap[code])
+      .map(code => ({
+        roleId: teamLeadRole.id,
+        permissionId: permissionMap[code],
+      })),
     skipDuplicates: true,
   });
 
   // Insert EMPLOYEE permissions
   await prisma.rolePermission.createMany({
-    data: employeePermissions.map((code) => ({
-      roleId: employeeRole.id,
-      permissionId: permissionMap[code],
-    })),
+    data: employeePermissions
+      .filter(code => permissionMap[code])
+      .map(code => ({
+        roleId: employeeRole.id,
+        permissionId: permissionMap[code],
+      })),
     skipDuplicates: true,
   });
 
@@ -243,7 +244,7 @@ await prisma.rolePermission.createMany({
 }
 
 main()
-  .catch((e) => console.error(e))
+  .catch(console.error)
   .finally(async () => {
     await prisma.$disconnect();
   });
