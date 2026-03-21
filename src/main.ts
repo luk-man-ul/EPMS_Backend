@@ -17,11 +17,10 @@ async function bootstrap() {
   });
 
   // Enable CORS
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-  app.enableCors({
-    origin: frontendUrl,
-    credentials: true,
-  });
+ app.enableCors({
+  origin: process.env.FRONTEND_URL?.split(','),
+  credentials: true,
+});
 
   // Get Winston logger
   const logger = app.get(WINSTON_MODULE_NEST_PROVIDER);
