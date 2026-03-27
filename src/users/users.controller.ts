@@ -81,12 +81,19 @@ export class UsersController {
       limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
     }),
   )
-  uploadProfilePhoto(@UploadedFile() file: Express.Multer.File) {
+  uploadProfilePhoto(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
     if (!file) {
       throw new BadRequestException('No image uploaded');
     }
+
+    // Build absolute URL — use BACKEND_URL env var if set (production),
+    // otherwise fall back to request host (local dev)
+    const baseUrl =
+      process.env.BACKEND_URL ||
+      `${req.protocol}://${req.get('host')}`;
+
     return {
-      url: `/uploads/profile-photos/${file.filename}`,
+      url: `${baseUrl}/uploads/profile-photos/${file.filename}`,
     };
   }
 
