@@ -7,6 +7,9 @@ import {
   Body,
   UseGuards,
   Req,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -14,7 +17,13 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import * as fs from 'fs';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -25,6 +34,61 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 @Controller('users')
 export class UsersController {
   constructor(private usersService: UsersService) {}
+
+  ////////////////////////////////////////////////////////////
+  // UPLOAD PROFILE PHOTO
+  ////////////////////////////////////////////////////////////
+
+  @Permissions('employees.create')
+  @Post('upload-photo')
+  @ApiOperation({ summary: 'Upload employee profile photo' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        photo: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Returns the uploaded photo URL' })
+  @ApiResponse({ status: 400, description: 'Invalid file type or no file uploaded' })
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          const dir = './uploads/profile-photos';
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          cb(null, dir);
+        },
+        filename: (req, file, cb) => {
+          const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `photo-${unique}${extname(file.originalname)}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (!allowed.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException('Only JPEG, PNG, and WebP images are allowed'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    }),
+  )
+  uploadProfilePhoto(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No image uploaded');
+    }
+    return {
+      url: `/uploads/profile-photos/${file.filename}`,
+    };
+  }
 
   ////////////////////////////////////////////////////////////
   // CREATE USER
