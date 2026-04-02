@@ -72,6 +72,11 @@ enum AttendanceStatus {
   WFH
 }
 
+enum WorkMode {
+  ON_SITE
+  WFH
+}
+
 enum LeaveType {
   SICK
   CASUAL
@@ -108,6 +113,7 @@ model User {
   status       UserStatus @default(ACTIVE)
   lastLoginAt  DateTime?
   tokenVersion Int        @default(0)
+  workMode     WorkMode   @default(ON_SITE)
 
   roles  UserRole[]
   skills UserSkill[] // 👈 NEW
@@ -136,6 +142,10 @@ model User {
   // Leave
   leaveRequests  LeaveRequest[] @relation("LeaveRequester")
   approvedLeaves LeaveRequest[] @relation("LeaveApprover")
+
+  // WFH
+  wfhRequests    WfhRequest[]   @relation("WfhRequester")
+  approvedWfh    WfhRequest[]   @relation("WfhApprovedBy")
 
   attendance         Attendance[]
   attendanceSessions AttendanceSession[]
@@ -420,6 +430,7 @@ model AttendanceSession {
   checkOut  DateTime?
   latitude  Float?
   longitude Float?
+  workMode  WorkMode  @default(ON_SITE)
   createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -442,6 +453,29 @@ model LeaveRequest {
   approvedBy User? @relation("LeaveApprover", fields: [approvedById], references: [id])
 
   createdAt DateTime @default(now())
+}
+
+//////////////////////////////////////////////////////
+// WFH REQUESTS
+//////////////////////////////////////////////////////
+
+model WfhRequest {
+  id           String         @id @default(uuid())
+  userId       String
+  fromDate     DateTime       @db.Date
+  toDate       DateTime       @db.Date
+  reason       String
+  status       ApprovalStatus @default(PENDING)
+  approvedById String?
+  approvedAt   DateTime?
+
+  user       User  @relation("WfhRequester", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("WfhApprovedBy", fields: [approvedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, fromDate, toDate])
+  @@index([status])
 }
 
 //////////////////////////////////////////////////////
