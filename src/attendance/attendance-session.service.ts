@@ -111,24 +111,31 @@ export class AttendanceSessionService {
       throw new BadRequestException('Location is required for check-in');
     }
 
-    // Calculate distance from office
-    const distance = this.calculateDistance(
-      latitude,
-      longitude,
-      this.OFFICE_LATITUDE,
-      this.OFFICE_LONGITUDE,
-    );
+    // Determine if this user is allowed to check in remotely today
+    const isWfh = await this.isWfhAllowed(userId);
 
-    this.logger.log(`Distance from office: ${distance.toFixed(2)} meters (allowed: ${this.ALLOWED_RADIUS_METERS}m)`);
+    if (isWfh) {
+      this.logger.log(`WFH check-in allowed for user ${userId} - skipping geofence validation`);
+    } else {
+      // Calculate distance from office
+      const distance = this.calculateDistance(
+        latitude,
+        longitude,
+        this.OFFICE_LATITUDE,
+        this.OFFICE_LONGITUDE,
+      );
 
-    // Enforce geofencing
-    if (distance > this.ALLOWED_RADIUS_METERS) {
-      this.logger.warn(
-        `Check-in rejected - User ${userId} is ${distance.toFixed(2)}m from office (limit: ${this.ALLOWED_RADIUS_METERS}m)`
-      );
-      throw new BadRequestException(
-        `You are outside the allowed office area. You must be within ${this.ALLOWED_RADIUS_METERS} meters of the office to check in.`,
-      );
+      this.logger.log(`Distance from office: ${distance.toFixed(2)} meters (allowed: ${this.ALLOWED_RADIUS_METERS}m)`);
+
+      // Enforce geofencing
+      if (distance > this.ALLOWED_RADIUS_METERS) {
+        this.logger.warn(
+          `Check-in rejected - User ${userId} is ${distance.toFixed(2)}m from office (limit: ${this.ALLOWED_RADIUS_METERS}m)`
+        );
+        throw new BadRequestException(
+          `You are outside the allowed office area. You must be within ${this.ALLOWED_RADIUS_METERS} meters of the office to check in.`,
+        );
+      }
     }
 
     // Check if there's an active session (checkOut is null)
@@ -181,13 +188,14 @@ export class AttendanceSessionService {
       );
     }
 
-    // Create new session with location
+    // Create new session with location and work mode
     const newSession = await this.prisma.attendanceSession.create({
       data: {
         userId,
         checkIn: new Date(),
         latitude,
         longitude,
+        workMode: isWfh ? 'WFH' : 'ON_SITE',
       },
       include: {
         user: {
@@ -198,10 +206,49 @@ export class AttendanceSessionService {
 
     this.logger.log(
       `Check-in successful - User: ${userId}, Session ID: ${newSession.id}, ` +
-      `Time: ${newSession.checkIn.toISOString()}`
+      `Mode: ${newSession.workMode}, Time: ${newSession.checkIn.toISOString()}`
     );
 
     return newSession;
+  }
+
+  /**
+   * Determines if a user is allowed to check in remotely today.
+   * Returns true if:
+   *   1. The user has an APPROVED WfhRequest covering today's date, OR
+   *   2. The user's default workMode is WFH
+   */
+  private async isWfhAllowed(userId: string): Promise<boolean> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Check for an approved WFH request covering today
+    const approvedRequest = await this.prisma.wfhRequest.findFirst({
+      where: {
+        userId,
+        status: 'APPROVED',
+        fromDate: { lte: today },
+        toDate: { gte: today },
+      },
+    });
+
+    if (approvedRequest) {
+      this.logger.log(`User ${userId} has an approved WFH request covering today`);
+      return true;
+    }
+
+    // Fall back to the user's default work mode
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { workMode: true },
+    });
+
+    if (user?.workMode === 'WFH') {
+      this.logger.log(`User ${userId} has default workMode = WFH`);
+      return true;
+    }
+
+    return false;
   }
 
   async checkOut(userId: string) {

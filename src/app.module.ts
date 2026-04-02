@@ -18,6 +18,7 @@ import { TicketsModule } from './tickets/tickets.module';
 import { TicketWorkflowService } from './tickets/ticket-workflow.service';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
+import { WfhRequestModule } from './wfh-request/wfh-request.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
 import { ChatModule } from './chat/chat.module';
@@ -45,6 +46,7 @@ import { HealthController } from './health/health.controller';
     TicketsModule,
     AttendanceModule,
     LeaveModule,
+    WfhRequestModule,
     NotificationsModule,
     ActivityLogsModule,
     ChatModule,
