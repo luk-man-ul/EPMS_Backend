@@ -51,6 +51,7 @@ export class UsersService {
         phone: data.phone,
         department: data.department,
         profilePhoto: data.profilePhoto,
+        workMode: data.workMode || 'ON_SITE',
         joinedAt: new Date(),
         skills: data.skillIds
           ? {
@@ -264,6 +265,7 @@ export class UsersService {
         phone: data.phone,
         department: data.department,
         profilePhoto: data.profilePhoto,
+        workMode: data.workMode,
         skills: data.skillIds
           ? {
               deleteMany: {},
