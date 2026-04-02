@@ -96,7 +96,7 @@ export class FilesController {
       throw new BadRequestException('No file uploaded');
     }
     this.logger.log(`File upload request: ${file.originalname} (${file.size} bytes) for ${uploadFileDto.entityType}:${uploadFileDto.entityId}`);
-    return this.filesService.uploadFile(file, uploadFileDto.entityType, uploadFileDto.entityId, req.user.userId);
+    return this.filesService.uploadFile(file, uploadFileDto.entityType, uploadFileDto.entityId, req.user.id);
   }
 
   @Get(':entityType/:entityId')
@@ -124,6 +124,6 @@ export class FilesController {
   @ApiParam({ name: 'id', description: 'File UUID' })
   @ApiResponse({ status: 200, description: 'File deleted successfully' })
   async deleteFile(@Param('id') id: string, @Request() req) {
-    return this.filesService.deleteFile(id, req.user.userId);
+    return this.filesService.deleteFile(id, req.user.id);
   }
 }
