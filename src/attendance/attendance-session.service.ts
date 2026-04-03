@@ -501,14 +501,20 @@ export class AttendanceSessionService {
 
     // Date range filtering
     if (filters.startDate && filters.endDate) {
+      const end = new Date(filters.endDate);
+      const nextDay = new Date(end);
+      nextDay.setUTCDate(end.getUTCDate() + 1);
       where.checkIn = {
         gte: new Date(filters.startDate),
-        lte: new Date(filters.endDate),
+        lt: nextDay,
       };
     } else if (filters.startDate) {
       where.checkIn = { gte: new Date(filters.startDate) };
     } else if (filters.endDate) {
-      where.checkIn = { lte: new Date(filters.endDate) };
+      const end = new Date(filters.endDate);
+      const nextDay = new Date(end);
+      nextDay.setUTCDate(end.getUTCDate() + 1);
+      where.checkIn = { lt: nextDay };
     }
 
     // User filter (for admins/team leads)
