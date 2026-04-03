@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 
@@ -518,12 +518,21 @@ export class ChatService {
       throw new NotFoundException('Message not found');
     }
 
+    if (message.isDeleted) {
+      throw new ForbiddenException('Cannot edit a deleted message');
+    }
+
     if (message.senderId !== userId) {
       throw new ForbiddenException('You can only edit your own messages');
     }
 
-    if (message.isDeleted) {
-      throw new ForbiddenException('Cannot edit a deleted message');
+    const diff = Date.now() - message.createdAt.getTime();
+    if (diff > 15 * 60 * 1000) {
+      throw new BadRequestException('Edit time window expired');
+    }
+
+    if (!newContent.trim()) {
+      throw new BadRequestException('Message content cannot be empty');
     }
 
     return this.prisma.chatMessage.update({
