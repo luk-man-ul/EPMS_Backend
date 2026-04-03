@@ -9,6 +9,9 @@ export class AdminService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const nextDay = new Date(today);
+    nextDay.setDate(nextDay.getDate() + 1);
+
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
@@ -67,13 +70,17 @@ export class AdminService {
         },
       }),
 
-      // Today's Attendance
-      this.prisma.attendance.findMany({
+      // Today's Attendance Sessions (source of truth for check-ins)
+      this.prisma.attendanceSession.findMany({
         where: {
-          date: today,
+          checkIn: {
+            gte: today,
+            lt: nextDay,
+          },
         },
         select: {
-          status: true,
+          userId: true,
+          checkIn: true,
         },
       }),
 
@@ -105,14 +112,16 @@ export class AdminService {
         },
       }),
 
-      // Today's Attendance Sessions for detailed breakdown
+      // Today's Attendance Sessions for late check-in breakdown
       this.prisma.attendanceSession.findMany({
         where: {
           checkIn: {
             gte: today,
+            lt: nextDay,
           },
         },
         select: {
+          userId: true,
           checkIn: true,
         },
       }),
@@ -144,19 +153,26 @@ export class AdminService {
     let lateCount = 0;
 
     if (totalEmployeesCount > 0) {
-      presentCount = todayAttendanceData.filter(
-        (att) => att.status === 'PRESENT' || att.status === 'WFH',
-      ).length;
+      // Count distinct users who have checked in today
+      const distinctUserIds = new Set(todayAttendanceData.map((s) => s.userId));
+      presentCount = distinctUserIds.size;
       absentCount = totalEmployeesCount - presentCount;
       todayAttendancePercentage = Math.round(
         (presentCount / totalEmployeesCount) * 100,
       );
 
-      // Calculate late check-ins (after 9:30 AM)
+      // Calculate late check-ins (after 9:30 AM) — one entry per user (their first check-in)
       const lateThreshold = new Date(today);
       lateThreshold.setHours(9, 30, 0, 0);
-      lateCount = todayAttendanceSessions.filter(
-        (session) => new Date(session.checkIn) > lateThreshold,
+      const firstCheckInPerUser = new Map<string, Date>();
+      todayAttendanceSessions.forEach((session) => {
+        const existing = firstCheckInPerUser.get(session.userId);
+        if (!existing || new Date(session.checkIn) < existing) {
+          firstCheckInPerUser.set(session.userId, new Date(session.checkIn));
+        }
+      });
+      lateCount = Array.from(firstCheckInPerUser.values()).filter(
+        (checkIn) => checkIn > lateThreshold,
       ).length;
     }
 
