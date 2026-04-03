@@ -509,6 +509,74 @@ export class ChatService {
     return message;
   }
 
+  async editMessage(messageId: string, userId: string, newContent: string) {
+    const message = await this.prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+
+    if (message.senderId !== userId) {
+      throw new ForbiddenException('You can only edit your own messages');
+    }
+
+    if (message.isDeleted) {
+      throw new ForbiddenException('Cannot edit a deleted message');
+    }
+
+    return this.prisma.chatMessage.update({
+      where: { id: messageId },
+      data: {
+        content: newContent,
+        isEdited: true,
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            profilePhoto: true,
+          },
+        },
+      },
+    });
+  }
+
+  async deleteMessage(messageId: string, userId: string, userRole?: string) {
+    const message = await this.prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+
+    const isAdmin = userRole === 'ADMIN';
+    if (!isAdmin && message.senderId !== userId) {
+      throw new ForbiddenException('You can only delete your own messages');
+    }
+
+    return this.prisma.chatMessage.update({
+      where: { id: messageId },
+      data: { isDeleted: true },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            profilePhoto: true,
+          },
+        },
+      },
+    });
+  }
+
   async verifyRoomMembership(roomId: string, userId: string): Promise<boolean> {
     const membership = await this.prisma.chatRoomMember.findFirst({
       where: {

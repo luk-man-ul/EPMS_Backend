@@ -176,6 +176,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('editMessage')
+  async handleEditMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; content: string; userId: string },
+  ) {
+    try {
+      const { messageId, content, userId } = data;
+
+      if (!messageId || !content || !userId) {
+        client.emit('error', { message: 'messageId, content, and userId are required' });
+        return { success: false, error: 'Missing required fields' };
+      }
+
+      const updatedMessage = await this.chatService.editMessage(messageId, userId, content);
+
+      // Broadcast updated message to all users in the room
+      this.server.to(updatedMessage.roomId).emit('messageEdited', updatedMessage);
+
+      this.logger.log(`Message ${messageId} edited by user ${userId}`);
+
+      return { success: true, message: updatedMessage };
+    } catch (error) {
+      this.logger.error(`Error editing message - Socket ${client.id}:`, error);
+      client.emit('error', { message: error.message || 'Failed to edit message' });
+      return { success: false, error: error.message || 'Internal error' };
+    }
+  }
+
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; userId: string },
+  ) {
+    try {
+      const { messageId, userId } = data;
+
+      if (!messageId || !userId) {
+        client.emit('error', { message: 'messageId and userId are required' });
+        return { success: false, error: 'Missing required fields' };
+      }
+
+      const userRole = this.userRoles.get(userId) || 'EMPLOYEE';
+      const deletedMessage = await this.chatService.deleteMessage(messageId, userId, userRole);
+
+      // Broadcast deletion to all users in the room
+      this.server.to(deletedMessage.roomId).emit('messageDeleted', { messageId });
+
+      this.logger.log(`Message ${messageId} deleted by user ${userId}`);
+
+      return { success: true, messageId };
+    } catch (error) {
+      this.logger.error(`Error deleting message - Socket ${client.id}:`, error);
+      client.emit('error', { message: error.message || 'Failed to delete message' });
+      return { success: false, error: error.message || 'Internal error' };
+    }
+  }
+
   @SubscribeMessage('typing')
   async handleTyping(
     @ConnectedSocket() client: Socket,

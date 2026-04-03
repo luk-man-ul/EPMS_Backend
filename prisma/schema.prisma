@@ -521,15 +521,18 @@ model ChatRoom {
 }
 
 model ChatMessage {
-  id       String @id @default(uuid())
-  roomId   String
-  senderId String
-  content  String
+  id        String  @id @default(uuid())
+  roomId    String
+  senderId  String
+  content   String
+  isDeleted Boolean  @default(false)
+  isEdited  Boolean  @default(false)
 
   room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
   sender User     @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([roomId])
   @@index([senderId])
