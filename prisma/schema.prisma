@@ -431,7 +431,6 @@ model AttendanceSession {
   checkOut  DateTime?
   latitude  Float?
   longitude Float?
-  workMode  WorkMode  @default(ON_SITE)
   createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

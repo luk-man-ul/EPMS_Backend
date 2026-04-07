@@ -28,7 +28,7 @@ type AttendanceStatusValue = 'PRESENT' | 'LATE' | 'HALF_DAY' | 'WFH' | 'ABSENT';
  * @param isWfh - true if the employee is permanent WFH or has an approved WFH request for today
  */
 function calculateLiveStatus(
-  sessions: Array<{ checkIn: string | Date; checkOut: string | Date | null; workMode: string }>,
+  sessions: Array<{ checkIn: string | Date; checkOut: string | Date | null }>,
   isWfh: boolean = false,
 ): AttendanceStatusValue {
   // WFH takes priority — check before anything else

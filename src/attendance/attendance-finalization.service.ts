@@ -64,7 +64,6 @@ export class AttendanceFinalizationService {
         userId: true,
         checkIn: true,
         checkOut: true,
-        workMode: true,
       },
     });
 
@@ -161,7 +160,6 @@ export class AttendanceFinalizationService {
     sessions: Array<{
       checkIn: Date;
       checkOut: Date | null;
-      workMode: string;
     }>,
     lateThreshold: Date,
     halfDayCheckInThreshold: Date,

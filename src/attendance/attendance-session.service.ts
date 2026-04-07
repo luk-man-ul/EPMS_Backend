@@ -198,7 +198,6 @@ export class AttendanceSessionService {
         checkIn: new Date(),
         latitude,
         longitude,
-        workMode: isWfh ? 'WFH' : 'ON_SITE',
       },
       include: {
         user: {
@@ -209,7 +208,7 @@ export class AttendanceSessionService {
 
     this.logger.log(
       `Check-in successful - User: ${userId}, Session ID: ${newSession.id}, ` +
-      `Mode: ${newSession.workMode}, Time: ${newSession.checkIn.toISOString()}`
+      `Time: ${newSession.checkIn.toISOString()}`
     );
 
     return newSession;
