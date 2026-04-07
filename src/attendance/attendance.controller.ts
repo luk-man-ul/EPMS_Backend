@@ -51,8 +51,8 @@ export class AttendanceController {
   @Get('my')
   @ApiOperation({ summary: 'Get attendance history for current user' })
   @ApiResponse({ status: 200, description: 'Returns attendance records' })
-  getMyAttendance(@Req() req) {
-    return this.attendanceService.findMyAttendance(req.user.id);
+  getMyAttendance(@Query() filters: AttendanceFilterDto, @Req() req) {
+    return this.attendanceService.findMyAttendance(req.user.id, filters);
   }
 
   @Permissions('attendance.view')
