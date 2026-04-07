@@ -50,7 +50,7 @@ export class AttendanceFinalizationService {
           some: { role: { name: { not: 'ADMIN' } } },
         },
       },
-      select: { id: true, email: true },
+      select: { id: true, email: true, workMode: true },
     });
 
     this.logger.log(`Processing ${employees.length} employees for ${dateStr}`);
@@ -77,6 +77,17 @@ export class AttendanceFinalizationService {
       sessionsByUser.get(session.userId)!.push(session);
     }
 
+    // ── Step 2b: Fetch all approved WFH requests covering this day ───────────
+    const wfhRequests = await this.prisma.wfhRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        fromDate: { lte: dayStart },
+        toDate: { gte: dayStart },
+      },
+      select: { userId: true },
+    });
+    const wfhUserIds = new Set(wfhRequests.map((r) => r.userId));
+
     const lateThreshold = getISTTimeToday(this.LATE_HOUR, this.LATE_MINUTE, dayStart);
     const halfDayCheckInThreshold = getISTTimeToday(this.HALF_DAY_CHECKIN_HOUR, this.HALF_DAY_CHECKIN_MINUTE, dayStart);
 
@@ -87,8 +98,11 @@ export class AttendanceFinalizationService {
     for (const employee of employees) {
       const sessions = sessionsByUser.get(employee.id) ?? [];
 
+      // WFH if: permanent WFH employee OR has an approved WFH request for this day
+      const isWfh = employee.workMode === 'WFH' || wfhUserIds.has(employee.id);
+
       const { status, firstCheckIn, lastCheckOut, totalHours } =
-        this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold);
+        this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold, isWfh);
 
       if (status === 'ABSENT') {
         absent++;
@@ -137,7 +151,7 @@ export class AttendanceFinalizationService {
    * Priority: WFH > HALF_DAY > LATE > PRESENT
    *
    * Rules (IST):
-   *   - Any WFH session                          → WFH
+   *   - Employee is permanent WFH OR has approved WFH request for this day → WFH
    *   - firstCheckIn > 12:30 PM                  → HALF_DAY (very late)
    *   - totalHours < 4 (and sessions exist)       → HALF_DAY (short hours)
    *   - firstCheckIn > 10:30 AM                  → LATE
@@ -151,6 +165,7 @@ export class AttendanceFinalizationService {
     }>,
     lateThreshold: Date,
     halfDayCheckInThreshold: Date,
+    isWfh: boolean = false,
   ): {
     status: 'PRESENT' | 'ABSENT' | 'LATE' | 'HALF_DAY' | 'WFH';
     firstCheckIn: Date | null;
@@ -158,6 +173,10 @@ export class AttendanceFinalizationService {
     totalHours: number;
   } {
     if (sessions.length === 0) {
+      // Permanent WFH employees with no sessions are still WFH (they may not check in)
+      if (isWfh) {
+        return { status: 'WFH', firstCheckIn: null, lastCheckOut: null, totalHours: 0 };
+      }
       return { status: 'ABSENT', firstCheckIn: null, lastCheckOut: null, totalHours: 0 };
     }
 
@@ -185,9 +204,8 @@ export class AttendanceFinalizationService {
 
     const roundedHours = Math.round(totalHours * 100) / 100;
 
-    // 1. WFH — any session with WFH workMode
-    const hasWfhSession = sessions.some((s) => s.workMode === 'WFH');
-    if (hasWfhSession) {
+    // 1. WFH — permanent WFH employee OR approved WFH request for this day
+    if (isWfh) {
       return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
 

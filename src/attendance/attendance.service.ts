@@ -24,14 +24,21 @@ type AttendanceStatusValue = 'PRESENT' | 'LATE' | 'HALF_DAY' | 'WFH' | 'ABSENT';
  * Uses the same priority and thresholds as AttendanceFinalizationService.calculateDailyStatus().
  *
  * Priority: WFH > HALF_DAY > LATE > PRESENT
+ *
+ * @param isWfh - true if the employee is permanent WFH or has an approved WFH request for today
  */
 function calculateLiveStatus(
   sessions: Array<{ checkIn: string | Date; checkOut: string | Date | null; workMode: string }>,
+  isWfh: boolean = false,
 ): AttendanceStatusValue {
-  if (!sessions || sessions.length === 0) return 'ABSENT';
+  // WFH takes priority — check before anything else
+  if (isWfh) {
+    if (!sessions || sessions.length === 0) return 'WFH';
+    // Still compute firstCheckIn/totalHours for display, but status is WFH
+    return 'WFH';
+  }
 
-  // Any WFH session → WFH
-  if (sessions.some((s) => s.workMode === 'WFH')) return 'WFH';
+  if (!sessions || sessions.length === 0) return 'ABSENT';
 
   // Sort ascending by checkIn
   const sorted = [...sessions].sort(
@@ -199,6 +206,33 @@ export class AttendanceService {
         user,
       );
 
+      // Fetch WFH context for all users in the live result in one query
+      const liveUserIds = liveData.data.map((r: any) => r.userId);
+      const todayIST = getISTStartOfDay();
+
+      // Approved WFH requests covering today
+      const wfhRequests = liveUserIds.length > 0
+        ? await this.prisma.wfhRequest.findMany({
+            where: {
+              userId: { in: liveUserIds },
+              status: 'APPROVED',
+              fromDate: { lte: todayIST },
+              toDate: { gte: todayIST },
+            },
+            select: { userId: true },
+          })
+        : [];
+      const wfhRequestUserIds = new Set(wfhRequests.map((r) => r.userId));
+
+      // Permanent WFH employees
+      const permanentWfhUsers = liveUserIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: liveUserIds }, workMode: 'WFH' },
+            select: { id: true },
+          })
+        : [];
+      const permanentWfhUserIds = new Set(permanentWfhUsers.map((u) => u.id));
+
       // Normalize live records: derive firstCheckIn/lastCheckOut from sessions
       // sorted ascending so index 0 is always the earliest check-in.
       // Compute a real status using the same logic as finalization — no temp labels.
@@ -207,11 +241,12 @@ export class AttendanceService {
           (a: any, b: any) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
         );
         const completedSorted = sorted.filter((s: any) => s.checkOut);
+        const isWfh = permanentWfhUserIds.has(record.userId) || wfhRequestUserIds.has(record.userId);
         return {
           ...record,
           firstCheckIn: sorted[0]?.checkIn ?? null,
           lastCheckOut: completedSorted.at(-1)?.checkOut ?? null,
-          status: calculateLiveStatus(record.sessions ?? []),
+          status: calculateLiveStatus(record.sessions ?? [], isWfh),
         };
       });
 

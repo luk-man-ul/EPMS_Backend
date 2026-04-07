@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWfhRequestDto } from './dto/create-wfh-request.dto';
-import { getISTStartOfDay, getISTStartOfNextDay } from '../common/utils/ist-date.util';
+import { getISTStartOfDay } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class WfhRequestService {
@@ -139,30 +139,6 @@ export class WfhRequestService {
         },
       },
     });
-
-    // Retroactive WFH correction:
-    // If approved, find any ON_SITE session the employee started today and flip it to WFH.
-    // This handles the case where the employee checked in before the approval came through.
-    if (status === 'APPROVED') {
-      const todayStart = getISTStartOfDay();
-      const todayEnd = getISTStartOfNextDay();
-
-      const todaySession = await this.prisma.attendanceSession.findFirst({
-        where: {
-          userId: request.userId,
-          checkIn: { gte: todayStart, lt: todayEnd },
-          workMode: 'ON_SITE',
-        },
-        orderBy: { checkIn: 'asc' },
-      });
-
-      if (todaySession) {
-        await this.prisma.attendanceSession.update({
-          where: { id: todaySession.id },
-          data: { workMode: 'WFH' },
-        });
-      }
-    }
 
     return updatedRequest;
   }
