@@ -126,17 +126,34 @@ export class AttendanceService {
 
     // If today is within the requested range and has no finalized record yet,
     // supplement with live session data so the UI shows "In Progress" correctly.
+    // Skip this supplement when a status filter is active — live sessions have no
+    // status and would pollute filtered results.
     const todayStr = toISTDateString(new Date());
     const hasToday = !filters.startDate || filters.startDate <= todayStr;
     const todayAlreadyFinalized = data.some((r) => r.date === todayStr);
+    const statusFilterActive = !!filters.status;
 
-    if (hasToday && !todayAlreadyFinalized) {
+    if (hasToday && !todayAlreadyFinalized && !statusFilterActive) {
       const liveData = await this.sessionService.getAllSessions(
-        { ...filters, startDate: todayStr, endDate: todayStr },
+        { startDate: todayStr, endDate: todayStr },
         user,
       );
-      // Prepend live today records (they have sessions[] but no status)
-      data.unshift(...liveData.data);
+
+      // Normalize live records: derive firstCheckIn/lastCheckOut from sessions
+      // sorted ascending so index 0 is always the earliest check-in
+      const liveRecords = liveData.data.map((record: any) => {
+        const sorted = [...(record.sessions ?? [])].sort(
+          (a: any, b: any) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
+        );
+        const completedSorted = sorted.filter((s: any) => s.checkOut);
+        return {
+          ...record,
+          firstCheckIn: sorted[0]?.checkIn ?? null,
+          lastCheckOut: completedSorted.at(-1)?.checkOut ?? null,
+        };
+      });
+
+      data.unshift(...liveRecords);
     }
 
     return {

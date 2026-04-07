@@ -580,9 +580,12 @@ export class AttendanceSessionService {
       }
     });
 
-    // Convert map to array and round total hours
+    // Convert map to array, sort sessions ascending within each group, and round total hours
     return Array.from(grouped.values()).map((group) => ({
       ...group,
+      sessions: group.sessions.sort(
+        (a: any, b: any) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
+      ),
       totalHours: Math.round(group.totalHours * 100) / 100,
     }));
   }
