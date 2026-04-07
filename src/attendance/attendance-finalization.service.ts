@@ -23,8 +23,10 @@ export class AttendanceFinalizationService {
   private readonly logger = new Logger(AttendanceFinalizationService.name);
 
   // Thresholds (IST)
-  private readonly LATE_HOUR = 9;
+  private readonly LATE_HOUR = 10;
   private readonly LATE_MINUTE = 30;
+  private readonly HALF_DAY_CHECKIN_HOUR = 12;
+  private readonly HALF_DAY_CHECKIN_MINUTE = 30;
   private readonly HALF_DAY_HOURS = 4;
 
   constructor(private prisma: PrismaService) {}
@@ -76,6 +78,7 @@ export class AttendanceFinalizationService {
     }
 
     const lateThreshold = getISTTimeToday(this.LATE_HOUR, this.LATE_MINUTE, dayStart);
+    const halfDayCheckInThreshold = getISTTimeToday(this.HALF_DAY_CHECKIN_HOUR, this.HALF_DAY_CHECKIN_MINUTE, dayStart);
 
     let finalized = 0;
     let absent = 0;
@@ -85,7 +88,7 @@ export class AttendanceFinalizationService {
       const sessions = sessionsByUser.get(employee.id) ?? [];
 
       const { status, firstCheckIn, lastCheckOut, totalHours } =
-        this.calculateDailyStatus(sessions, lateThreshold);
+        this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold);
 
       if (status === 'ABSENT') {
         absent++;
@@ -130,6 +133,15 @@ export class AttendanceFinalizationService {
 
   /**
    * Determine the daily attendance status and metrics from a list of sessions.
+   *
+   * Priority: WFH > HALF_DAY > LATE > PRESENT
+   *
+   * Rules (IST):
+   *   - Any WFH session                          → WFH
+   *   - firstCheckIn > 12:30 PM                  → HALF_DAY (very late)
+   *   - totalHours < 4 (and sessions exist)       → HALF_DAY (short hours)
+   *   - firstCheckIn > 10:30 AM                  → LATE
+   *   - otherwise                                 → PRESENT
    */
   private calculateDailyStatus(
     sessions: Array<{
@@ -138,6 +150,7 @@ export class AttendanceFinalizationService {
       workMode: string;
     }>,
     lateThreshold: Date,
+    halfDayCheckInThreshold: Date,
   ): {
     status: 'PRESENT' | 'ABSENT' | 'LATE' | 'HALF_DAY' | 'WFH';
     firstCheckIn: Date | null;
@@ -172,22 +185,25 @@ export class AttendanceFinalizationService {
 
     const roundedHours = Math.round(totalHours * 100) / 100;
 
-    // Any WFH session → WFH day
+    // 1. WFH — any session with WFH workMode
     const hasWfhSession = sessions.some((s) => s.workMode === 'WFH');
     if (hasWfhSession) {
       return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
 
-    // Late check-in
+    // 2. HALF_DAY — checked in after 12:30 PM IST (very late) OR worked < 4 hours
+    const veryLate = firstCheckIn > halfDayCheckInThreshold;
+    const shortHours = roundedHours < this.HALF_DAY_HOURS && roundedHours > 0;
+    if (veryLate || shortHours) {
+      return { status: 'HALF_DAY', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+    }
+
+    // 3. LATE — checked in after 10:30 AM IST
     if (firstCheckIn > lateThreshold) {
       return { status: 'LATE', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
 
-    // Half day (less than 4 hours total)
-    if (roundedHours < this.HALF_DAY_HOURS && roundedHours > 0) {
-      return { status: 'HALF_DAY', firstCheckIn, lastCheckOut, totalHours: roundedHours };
-    }
-
+    // 4. PRESENT
     return { status: 'PRESENT', firstCheckIn, lastCheckOut, totalHours: roundedHours };
   }
 }
