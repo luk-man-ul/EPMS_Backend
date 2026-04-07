@@ -7,7 +7,67 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { AttendanceSessionService } from './attendance-session.service';
-import { getISTStartOfDay, getISTStartOfNextDay, toISTDateString } from '../common/utils/ist-date.util';
+import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString } from '../common/utils/ist-date.util';
+
+// IST thresholds — must match attendance-finalization.service.ts
+const LATE_HOUR = 10;
+const LATE_MINUTE = 30;
+const HALF_DAY_CHECKIN_HOUR = 12;
+const HALF_DAY_CHECKIN_MINUTE = 30;
+const HALF_DAY_HOURS = 4;
+const MAX_SESSION_HOURS = 12; // matches AttendanceSessionService.MAX_SESSION_HOURS
+
+type AttendanceStatusValue = 'PRESENT' | 'LATE' | 'HALF_DAY' | 'WFH' | 'ABSENT';
+
+/**
+ * Compute a real-time attendance status from live session data.
+ * Uses the same priority and thresholds as AttendanceFinalizationService.calculateDailyStatus().
+ *
+ * Priority: WFH > HALF_DAY > LATE > PRESENT
+ */
+function calculateLiveStatus(
+  sessions: Array<{ checkIn: string | Date; checkOut: string | Date | null; workMode: string }>,
+): AttendanceStatusValue {
+  if (!sessions || sessions.length === 0) return 'ABSENT';
+
+  // Any WFH session → WFH
+  if (sessions.some((s) => s.workMode === 'WFH')) return 'WFH';
+
+  // Sort ascending by checkIn
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
+  );
+
+  const firstCheckIn = new Date(sorted[0].checkIn);
+
+  // Total hours — include ongoing open sessions using current time as end.
+  // Cap each session at MAX_SESSION_HOURS to prevent stale/cross-day inflation.
+  const now = new Date();
+  const maxSessionMs = MAX_SESSION_HOURS * 60 * 60 * 1000;
+  const totalHours = sorted.reduce((sum, s) => {
+    const start = new Date(s.checkIn);
+    const end = s.checkOut ? new Date(s.checkOut) : now;
+    const rawDuration = end.getTime() - start.getTime();
+    // Skip invalid/negative durations (clock skew, bad data)
+    if (rawDuration <= 0) return sum;
+    // Cap at MAX_SESSION_HOURS to guard against cross-day or stale sessions
+    const duration = Math.min(rawDuration, maxSessionMs);
+    return sum + duration / (1000 * 60 * 60);
+  }, 0);
+
+  // Compute IST thresholds relative to the check-in day
+  const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, firstCheckIn);
+  const halfDayCheckInThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, firstCheckIn);
+
+  // HALF_DAY: very late check-in OR short hours
+  if (firstCheckIn > halfDayCheckInThreshold) return 'HALF_DAY';
+  if (totalHours > 0 && totalHours < HALF_DAY_HOURS) return 'HALF_DAY';
+
+  // LATE: check-in after 10:30 AM IST
+  if (firstCheckIn > lateThreshold) return 'LATE';
+
+  return 'PRESENT';
+}
 
 @Injectable()
 export class AttendanceService {
@@ -125,22 +185,23 @@ export class AttendanceService {
     }));
 
     // If today is within the requested range and has no finalized record yet,
-    // supplement with live session data so the UI shows "In Progress" correctly.
-    // Skip this supplement when a status filter is active — live sessions have no
-    // status and would pollute filtered results.
+    // supplement with live session data with a computed real status.
+    // When a status filter is active, only inject today's records whose live
+    // status matches the filter — avoids polluting filtered results.
     const todayStr = toISTDateString(new Date());
     const hasToday = !filters.startDate || filters.startDate <= todayStr;
     const todayAlreadyFinalized = data.some((r) => r.date === todayStr);
     const statusFilterActive = !!filters.status;
 
-    if (hasToday && !todayAlreadyFinalized && !statusFilterActive) {
+    if (hasToday && !todayAlreadyFinalized) {
       const liveData = await this.sessionService.getAllSessions(
         { startDate: todayStr, endDate: todayStr },
         user,
       );
 
       // Normalize live records: derive firstCheckIn/lastCheckOut from sessions
-      // sorted ascending so index 0 is always the earliest check-in
+      // sorted ascending so index 0 is always the earliest check-in.
+      // Compute a real status using the same logic as finalization — no temp labels.
       const liveRecords = liveData.data.map((record: any) => {
         const sorted = [...(record.sessions ?? [])].sort(
           (a: any, b: any) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
@@ -150,10 +211,16 @@ export class AttendanceService {
           ...record,
           firstCheckIn: sorted[0]?.checkIn ?? null,
           lastCheckOut: completedSorted.at(-1)?.checkOut ?? null,
+          status: calculateLiveStatus(record.sessions ?? []),
         };
       });
 
-      data.unshift(...liveRecords);
+      // If a status filter is active, only include today's records that match
+      const toInject = statusFilterActive
+        ? liveRecords.filter((r: any) => r.status === filters.status)
+        : liveRecords;
+
+      data.unshift(...toInject);
     }
 
     return {
