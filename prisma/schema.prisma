@@ -409,18 +409,19 @@ model SelfWork {
 //////////////////////////////////////////////////////
 
 model Attendance {
-  id        String           @id @default(uuid())
-  userId    String
-  date      DateTime         @db.Date
-  checkIn   DateTime?
-  checkOut  DateTime?
-  latitude  Float?
-  longitude Float?
-  status    AttendanceStatus @default(PRESENT)
+  id           String           @id @default(uuid())
+  userId       String
+  date         DateTime         @db.Date
+  firstCheckIn DateTime?
+  lastCheckOut DateTime?
+  totalHours   Float            @default(0)
+  status       AttendanceStatus @default(PRESENT)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+  @@index([date])
+  @@index([userId, date])
 }
 
 model AttendanceSession {

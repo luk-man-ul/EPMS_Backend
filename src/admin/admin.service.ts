@@ -1,16 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getISTStartOfDay, getISTStartOfNextDay } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
   async getDashboardStats() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const nextDay = new Date(today);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const today = getISTStartOfDay();
+    const nextDay = getISTStartOfNextDay();
 
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -25,7 +23,6 @@ export class AdminService {
       monthlyFinanceData,
       allTasks,
       allTickets,
-      todayAttendanceSessions,
       monthlyExpenseData,
       pendingSelfWorkApprovals,
     ] = await Promise.all([
@@ -70,17 +67,16 @@ export class AdminService {
         },
       }),
 
-      // Today's Attendance Sessions (source of truth for check-ins)
-      this.prisma.attendanceSession.findMany({
+      // Today's finalized Attendance summaries (written by finalization cron)
+      // Falls back to live AttendanceSession count if finalization hasn't run yet
+      this.prisma.attendance.findMany({
         where: {
-          checkIn: {
-            gte: today,
-            lt: nextDay,
-          },
+          date: today,
         },
         select: {
           userId: true,
-          checkIn: true,
+          status: true,
+          firstCheckIn: true,
         },
       }),
 
@@ -112,20 +108,6 @@ export class AdminService {
         },
       }),
 
-      // Today's Attendance Sessions for late check-in breakdown
-      this.prisma.attendanceSession.findMany({
-        where: {
-          checkIn: {
-            gte: today,
-            lt: nextDay,
-          },
-        },
-        select: {
-          userId: true,
-          checkIn: true,
-        },
-      }),
-
       // Monthly Expense Data
       this.prisma.projectFinance.aggregate({
         _sum: {
@@ -146,34 +128,31 @@ export class AdminService {
       }),
     ]);
 
-    // Calculate today's attendance percentage
+    // Calculate today's attendance percentage from finalized Attendance summaries.
+    // If finalization hasn't run yet (e.g. mid-day), fall back to live session count.
     let todayAttendancePercentage = 0;
     let presentCount = 0;
     let absentCount = 0;
     let lateCount = 0;
 
     if (totalEmployeesCount > 0) {
-      // Count distinct users who have checked in today
-      const distinctUserIds = new Set(todayAttendanceData.map((s) => s.userId));
-      presentCount = distinctUserIds.size;
-      absentCount = totalEmployeesCount - presentCount;
-      todayAttendancePercentage = Math.round(
-        (presentCount / totalEmployeesCount) * 100,
-      );
+      if (todayAttendanceData.length > 0) {
+        // Finalized data available — read directly from Attendance table
+        presentCount = todayAttendanceData.filter(
+          (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'WFH' || a.status === 'HALF_DAY',
+        ).length;
+        lateCount = todayAttendanceData.filter((a) => a.status === 'LATE').length;
+      } else {
+        // Finalization hasn't run yet — fall back to live AttendanceSession count
+        const liveSessions = await this.prisma.attendanceSession.findMany({
+          where: { checkIn: { gte: today, lt: nextDay } },
+          select: { userId: true },
+        });
+        presentCount = new Set(liveSessions.map((s) => s.userId)).size;
+      }
 
-      // Calculate late check-ins (after 9:30 AM) — one entry per user (their first check-in)
-      const lateThreshold = new Date(today);
-      lateThreshold.setHours(9, 30, 0, 0);
-      const firstCheckInPerUser = new Map<string, Date>();
-      todayAttendanceSessions.forEach((session) => {
-        const existing = firstCheckInPerUser.get(session.userId);
-        if (!existing || new Date(session.checkIn) < existing) {
-          firstCheckInPerUser.set(session.userId, new Date(session.checkIn));
-        }
-      });
-      lateCount = Array.from(firstCheckInPerUser.values()).filter(
-        (checkIn) => checkIn > lateThreshold,
-      ).length;
+      absentCount = totalEmployeesCount - presentCount;
+      todayAttendancePercentage = Math.round((presentCount / totalEmployeesCount) * 100);
     }
 
     // Calculate task completion percentage

@@ -3,6 +3,7 @@ import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
 import { AttendanceSessionService } from './attendance-session.service';
 import { AttendanceSchedulerService } from './attendance-scheduler.service';
+import { AttendanceFinalizationService } from './attendance-finalization.service';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
@@ -12,7 +13,8 @@ import { PrismaModule } from '../prisma/prisma.module';
     AttendanceService,
     AttendanceSessionService,
     AttendanceSchedulerService,
+    AttendanceFinalizationService,
   ],
-  exports: [AttendanceService, AttendanceSessionService],
+  exports: [AttendanceService, AttendanceSessionService, AttendanceFinalizationService],
 })
 export class AttendanceModule {}

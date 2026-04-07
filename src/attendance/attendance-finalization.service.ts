@@ -1,0 +1,193 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  getISTStartOfDay,
+  getISTStartOfNextDay,
+  getISTTimeToday,
+  toISTDateString,
+} from '../common/utils/ist-date.util';
+
+/**
+ * AttendanceFinalizationService
+ *
+ * Runs once per day (after midnight auto-checkout) to convert raw
+ * AttendanceSession records into a single Attendance daily-summary row
+ * per employee.
+ *
+ * Architecture:
+ *   AttendanceSession  →  raw event log  (source of truth, never modified here)
+ *   Attendance         →  daily summary  (derived, written by this service)
+ */
+@Injectable()
+export class AttendanceFinalizationService {
+  private readonly logger = new Logger(AttendanceFinalizationService.name);
+
+  // Thresholds (IST)
+  private readonly LATE_HOUR = 9;
+  private readonly LATE_MINUTE = 30;
+  private readonly HALF_DAY_HOURS = 4;
+
+  constructor(private prisma: PrismaService) {}
+
+  /**
+   * Finalize attendance for a specific IST day.
+   * Defaults to "today" (the day that just ended when called at 23:59 IST).
+   */
+  async finalizeDay(targetDate?: Date): Promise<{ finalized: number; absent: number }> {
+    const dayStart = getISTStartOfDay(targetDate);
+    const dayEnd = getISTStartOfNextDay(targetDate);
+    const dateStr = toISTDateString(dayStart);
+
+    this.logger.log(`Starting attendance finalization for IST date: ${dateStr}`);
+
+    // ── Step 1: Fetch all active employees (non-admin) ──────────────────────
+    const employees = await this.prisma.user.findMany({
+      where: {
+        status: 'ACTIVE',
+        roles: {
+          some: { role: { name: { not: 'ADMIN' } } },
+        },
+      },
+      select: { id: true, email: true },
+    });
+
+    this.logger.log(`Processing ${employees.length} employees for ${dateStr}`);
+
+    // ── Step 2: Fetch all sessions for this IST day in one query ─────────────
+    const allSessions = await this.prisma.attendanceSession.findMany({
+      where: {
+        checkIn: { gte: dayStart, lt: dayEnd },
+      },
+      select: {
+        userId: true,
+        checkIn: true,
+        checkOut: true,
+        workMode: true,
+      },
+    });
+
+    // Group sessions by userId
+    const sessionsByUser = new Map<string, typeof allSessions>();
+    for (const session of allSessions) {
+      if (!sessionsByUser.has(session.userId)) {
+        sessionsByUser.set(session.userId, []);
+      }
+      sessionsByUser.get(session.userId)!.push(session);
+    }
+
+    const lateThreshold = getISTTimeToday(this.LATE_HOUR, this.LATE_MINUTE, dayStart);
+
+    let finalized = 0;
+    let absent = 0;
+
+    // ── Step 3: Calculate metrics and upsert Attendance row per employee ─────
+    for (const employee of employees) {
+      const sessions = sessionsByUser.get(employee.id) ?? [];
+
+      const { status, firstCheckIn, lastCheckOut, totalHours } =
+        this.calculateDailyStatus(sessions, lateThreshold);
+
+      if (status === 'ABSENT') {
+        absent++;
+      } else {
+        finalized++;
+      }
+
+      // UPSERT — safe to run multiple times (idempotent)
+      await this.prisma.attendance.upsert({
+        where: {
+          userId_date: {
+            userId: employee.id,
+            date: dayStart,
+          },
+        },
+        create: {
+          userId: employee.id,
+          date: dayStart,
+          // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
+          firstCheckIn,
+          lastCheckOut,
+          totalHours,
+          status,
+        },
+        update: {
+          // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
+          firstCheckIn,
+          lastCheckOut,
+          totalHours,
+          status,
+        },
+      });
+    }
+
+    this.logger.log(
+      `Finalization complete for ${dateStr} — ` +
+      `Present/Late/WFH/HalfDay: ${finalized}, Absent: ${absent}`,
+    );
+
+    return { finalized, absent };
+  }
+
+  /**
+   * Determine the daily attendance status and metrics from a list of sessions.
+   */
+  private calculateDailyStatus(
+    sessions: Array<{
+      checkIn: Date;
+      checkOut: Date | null;
+      workMode: string;
+    }>,
+    lateThreshold: Date,
+  ): {
+    status: 'PRESENT' | 'ABSENT' | 'LATE' | 'HALF_DAY' | 'WFH';
+    firstCheckIn: Date | null;
+    lastCheckOut: Date | null;
+    totalHours: number;
+  } {
+    if (sessions.length === 0) {
+      return { status: 'ABSENT', firstCheckIn: null, lastCheckOut: null, totalHours: 0 };
+    }
+
+    // First check-in (earliest)
+    const firstCheckIn = sessions.reduce(
+      (min, s) => (s.checkIn < min ? s.checkIn : min),
+      sessions[0].checkIn,
+    );
+
+    // Last check-out (latest completed session)
+    const completedSessions = sessions.filter((s) => s.checkOut !== null);
+    const lastCheckOut =
+      completedSessions.length > 0
+        ? completedSessions.reduce(
+            (max, s) => (s.checkOut! > max ? s.checkOut! : max),
+            completedSessions[0].checkOut!,
+          )
+        : null;
+
+    // Total hours across all completed sessions
+    const totalHours = completedSessions.reduce((sum, s) => {
+      const hours = (s.checkOut!.getTime() - s.checkIn.getTime()) / (1000 * 60 * 60);
+      return sum + hours;
+    }, 0);
+
+    const roundedHours = Math.round(totalHours * 100) / 100;
+
+    // Any WFH session → WFH day
+    const hasWfhSession = sessions.some((s) => s.workMode === 'WFH');
+    if (hasWfhSession) {
+      return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+    }
+
+    // Late check-in
+    if (firstCheckIn > lateThreshold) {
+      return { status: 'LATE', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+    }
+
+    // Half day (less than 4 hours total)
+    if (roundedHours < this.HALF_DAY_HOURS && roundedHours > 0) {
+      return { status: 'HALF_DAY', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+    }
+
+    return { status: 'PRESENT', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+  }
+}

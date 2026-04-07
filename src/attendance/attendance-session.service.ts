@@ -4,6 +4,13 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  getISTStartOfDay,
+  getISTStartOfNextDay,
+  getISTEndOfDay,
+  getISTTimeToday,
+  toISTDateString,
+} from '../common/utils/ist-date.util';
 
 @Injectable()
 export class AttendanceSessionService {
@@ -29,16 +36,15 @@ export class AttendanceSessionService {
    */
   private async recoverOldSessions() {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const todayIST = getISTStartOfDay();
 
-      this.logger.log(`Starting recovery process - checking for sessions before ${today.toISOString()}`);
+      this.logger.log(`Starting recovery process - checking for sessions before ${todayIST.toISOString()}`);
 
       const oldOpenSessions = await this.prisma.attendanceSession.findMany({
         where: {
           checkOut: null,
           checkIn: {
-            lt: today,
+            lt: todayIST,
           },
         },
         include: {
@@ -52,9 +58,8 @@ export class AttendanceSessionService {
         this.logger.warn(`Found ${oldOpenSessions.length} old open sessions to recover`);
 
         for (const session of oldOpenSessions) {
-          // Set checkout to end of that day (23:59:59)
-          const endOfDay = new Date(session.checkIn);
-          endOfDay.setHours(23, 59, 59, 999);
+          // Set checkout to end of that IST day (23:59:59.999 IST)
+          const endOfDay = getISTEndOfDay(session.checkIn);
 
           await this.prisma.attendanceSession.update({
             where: { id: session.id },
@@ -150,18 +155,17 @@ export class AttendanceSessionService {
     });
 
     if (activeSession) {
-      // Use ISO date strings for reliable date comparison (timezone-safe)
-      const now = new Date();
-      const todayDateString = now.toISOString().split('T')[0]; // "2026-03-12"
-      const sessionDateString = activeSession.checkIn.toISOString().split('T')[0]; // "2026-03-11"
+      // Compare IST date strings for reliable same-day detection
+      const todayDateString = toISTDateString(new Date());
+      const sessionDateString = toISTDateString(activeSession.checkIn);
 
       this.logger.log(
         `Active session found - Session ID: ${activeSession.id}, ` +
         `CheckIn: ${activeSession.checkIn.toISOString()}, ` +
-        `Today: ${todayDateString}, Session Date: ${sessionDateString}`
+        `Today (IST): ${todayDateString}, Session Date (IST): ${sessionDateString}`
       );
 
-      // CASE A: Session started today - block check-in
+      // CASE A: Session started today (IST) - block check-in
       if (todayDateString === sessionDateString) {
         this.logger.warn(
           `Check-in rejected - User ${userId} already has an active session today (Session ID: ${activeSession.id})`
@@ -169,12 +173,11 @@ export class AttendanceSessionService {
         throw new BadRequestException('You must check out before checking in again.');
       }
 
-      // CASE B: Session started on previous day - auto-close it
+      // CASE B: Session started on previous IST day - auto-close it
       this.logger.log(`Auto-closing previous day session for user ${userId} (Session ID: ${activeSession.id})`);
-      
-      // Set checkout to end of that day (23:59:59)
-      const endOfSessionDay = new Date(activeSession.checkIn);
-      endOfSessionDay.setHours(23, 59, 59, 999);
+
+      // Set checkout to end of that IST day (23:59:59.999 IST)
+      const endOfSessionDay = getISTEndOfDay(activeSession.checkIn);
 
       await this.prisma.attendanceSession.update({
         where: { id: activeSession.id },
@@ -219,16 +222,15 @@ export class AttendanceSessionService {
    *   2. The user's default workMode is WFH
    */
   private async isWfhAllowed(userId: string): Promise<boolean> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayIST = getISTStartOfDay();
 
-    // Check for an approved WFH request covering today
+    // Check for an approved WFH request covering today (IST)
     const approvedRequest = await this.prisma.wfhRequest.findFirst({
       where: {
         userId,
         status: 'APPROVED',
-        fromDate: { lte: today },
-        toDate: { gte: today },
+        fromDate: { lte: todayIST },
+        toDate: { gte: todayIST },
       },
     });
 
@@ -306,14 +308,13 @@ export class AttendanceSessionService {
     this.logger.log('Midnight auto-checkout job started');
 
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const todayIST = getISTStartOfDay();
 
       const sessionsToClose = await this.prisma.attendanceSession.findMany({
         where: {
           checkOut: null,
           checkIn: {
-            lt: today,
+            lt: todayIST,
           },
         },
         include: {
@@ -327,9 +328,8 @@ export class AttendanceSessionService {
         this.logger.warn(`Midnight job: Found ${sessionsToClose.length} sessions to auto-close`);
 
         for (const session of sessionsToClose) {
-          // Set checkout to 23:59:59 of the checkIn day
-          const endOfDay = new Date(session.checkIn);
-          endOfDay.setHours(23, 59, 59, 999);
+          // Set checkout to 23:59:59.999 IST of the checkIn IST day
+          const endOfDay = getISTEndOfDay(session.checkIn);
 
           await this.prisma.attendanceSession.update({
             where: { id: session.id },
@@ -421,17 +421,15 @@ export class AttendanceSessionService {
   }
 
   async getTodaySessions(userId: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayIST = getISTStartOfDay();
+    const tomorrowIST = getISTStartOfNextDay();
 
     const sessions = await this.prisma.attendanceSession.findMany({
       where: {
         userId,
         checkIn: {
-          gte: today,
-          lt: tomorrow,
+          gte: todayIST,
+          lt: tomorrowIST,
         },
       },
       orderBy: {
@@ -558,7 +556,8 @@ export class AttendanceSessionService {
     const grouped = new Map<string, any>();
 
     sessions.forEach((session) => {
-      const date = new Date(session.checkIn).toISOString().split('T')[0];
+      // Use IST date string so sessions after 18:30 UTC don't shift to the next day
+      const date = toISTDateString(new Date(session.checkIn));
       const key = `${session.userId}-${date}`;
 
       if (!grouped.has(key)) {
