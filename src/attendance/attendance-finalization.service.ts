@@ -146,6 +146,7 @@ export class AttendanceFinalizationService {
 
   /**
    * Determine the daily attendance status and metrics from a list of sessions.
+   * Public so AttendanceService can reuse this for live-today stats.
    *
    * Priority: WFH > HALF_DAY > LATE > PRESENT
    *
@@ -156,7 +157,7 @@ export class AttendanceFinalizationService {
    *   - firstCheckIn > 10:30 AM                  → LATE
    *   - otherwise                                 → PRESENT
    */
-  private calculateDailyStatus(
+  calculateDailyStatus(
     sessions: Array<{
       checkIn: Date;
       checkOut: Date | null;

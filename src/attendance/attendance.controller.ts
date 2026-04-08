@@ -64,6 +64,14 @@ export class AttendanceController {
   }
 
   @Permissions('attendance.view')
+  @Get('stats')
+  @ApiOperation({ summary: 'Get attendance summary statistics (Admin/Team Lead)' })
+  @ApiResponse({ status: 200, description: 'Returns aggregated attendance stats' })
+  getStats(@Query() filters: AttendanceFilterDto, @Req() req) {
+    return this.attendanceService.getStats(filters, req.user);
+  }
+
+  @Permissions('attendance.view')
   @Get()
   @ApiOperation({ summary: 'Get all attendance records with filters (Admin/Team Lead)' })
   @ApiResponse({ status: 200, description: 'Returns paginated attendance records' })
