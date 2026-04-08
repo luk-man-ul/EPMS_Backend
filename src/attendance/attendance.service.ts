@@ -7,8 +7,8 @@ import { AttendanceFinalizationService } from './attendance-finalization.service
 import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString } from '../common/utils/ist-date.util';
 
 // IST thresholds — must match attendance-finalization.service.ts
-const LATE_HOUR = 10;
-const LATE_MINUTE = 30;
+const LATE_HOUR = 11;
+const LATE_MINUTE = 0;
 const HALF_DAY_CHECKIN_HOUR = 12;
 const HALF_DAY_CHECKIN_MINUTE = 30;
 
@@ -347,7 +347,8 @@ export class AttendanceService {
         sessionsByUser.get(s.userId)!.push(s);
       }
 
-      const [wfhRequests, permanentWfhUsers] = await Promise.all([
+      // Fetch WFH context (workMode + approved requests) for all employees
+      const [wfhRequests, permanentWfhUsers, onLeaveUsers] = await Promise.all([
         this.prisma.wfhRequest.findMany({
           where: {
             userId: { in: allEmployeeIds },
@@ -361,20 +362,37 @@ export class AttendanceService {
           where: { id: { in: allEmployeeIds }, workMode: 'WFH' },
           select: { id: true },
         }),
+        this.prisma.leaveRequest.findMany({
+          where: {
+            userId: { in: allEmployeeIds },
+            status: 'APPROVED',
+            startDate: { lte: todayIST },
+            endDate: { gte: todayIST },
+          },
+          select: { userId: true },
+        }),
       ]);
 
       const wfhRequestIds = new Set(wfhRequests.map((r) => r.userId));
       const permanentWfhIds = new Set(permanentWfhUsers.map((u) => u.id));
-      const lateThreshold = getISTTimeToday(10, 30, todayIST);
-      const halfDayThreshold = getISTTimeToday(12, 30, todayIST);
+      const onLeaveIds = new Set(onLeaveUsers.map((r) => r.userId));
+      const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayIST);
+      const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayIST);
 
       for (const uid of allEmployeeIds) {
         const sessions = sessionsByUser.get(uid) ?? [];
         const isWfh = permanentWfhIds.has(uid) || wfhRequestIds.has(uid);
-        const { status } = this.finalizationService.calculateDailyStatus(
-          sessions, lateThreshold, halfDayThreshold, isWfh,
-        );
-        liveRows.push({ userId: uid, status, date: todayStr });
+
+        if (sessions.length === 0) {
+          // No session: ON_LEAVE or ABSENT
+          const status = onLeaveIds.has(uid) ? 'LEAVE' : 'ABSENT';
+          liveRows.push({ userId: uid, status, date: todayStr });
+        } else {
+          const { status } = this.finalizationService.calculateDailyStatus(
+            sessions, lateThreshold, halfDayThreshold, isWfh,
+          );
+          liveRows.push({ userId: uid, status, date: todayStr });
+        }
       }
     }
 
@@ -384,7 +402,11 @@ export class AttendanceService {
       ...liveRows,
     ];
 
-    // ── 7. Raw status counter (shared by both modes) ─────────────────────────
+    // ── 7. Raw status counter ─────────────────────────────────────────────────
+    // present = users with session (PRESENT + LATE + HALF_DAY + WFH)
+    // onsite  = users with session AND onsite (PRESENT + LATE + HALF_DAY)
+    // wfh     = users with session AND WFH
+    // absent  = totalEmployees - present - onLeave (per day)
     const raw = { present: 0, onsite: 0, wfh: 0, late: 0, halfDay: 0, onLeave: 0, absent: 0 };
 
     const applyStatus = (status: string) => {
@@ -399,28 +421,24 @@ export class AttendanceService {
     // ── 8. Single-day: count directly ────────────────────────────────────────
     if (isSingleDay) {
       for (const row of allRows) applyStatus(row.status);
+      // Absent = totalEmployees - present - onLeave (no double counting)
+      raw.absent = Math.max(0, totalEmployees - raw.present - raw.onLeave);
       return { totalEmployees, ...raw };
     }
 
     // ── 9. Range mode: aggregate all rows, then normalize by totalDays ────────
-    // Count rows that exist
     for (const row of allRows) applyStatus(row.status);
 
-    // Determine which days are covered by the range
     const totalDays = Math.round(
       (endIST.getTime() - startIST.getTime()) / (24 * 60 * 60 * 1000),
     );
 
-    // Count distinct (userId, date) pairs that have a record
+    // Missing (userId, date) pairs → ABSENT
     const coveredPairs = new Set(allRows.map((r) => `${r.userId}::${r.date}`));
-
-    // Missing users per day → count as ABSENT
-    // Build the set of all IST date strings in the range
     const rangeDates: string[] = [];
     for (let d = new Date(startIST); d < endIST; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
       rangeDates.push(toISTDateString(d));
     }
-
     for (const dateStr of rangeDates) {
       for (const uid of allEmployeeIds) {
         if (!coveredPairs.has(`${uid}::${dateStr}`)) {
@@ -429,11 +447,10 @@ export class AttendanceService {
       }
     }
 
-    // Normalize: divide each count by totalDays, round to 1 decimal
     const round1 = (n: number) => Math.round(n / totalDays * 10) / 10;
 
     const attendanceRate = totalEmployees > 0 && totalDays > 0
-      ? Math.round((raw.present / (totalEmployees * totalDays)) * 1000) / 10  // percentage, 1dp
+      ? Math.round((raw.present / (totalEmployees * totalDays)) * 1000) / 10
       : 0;
 
     return {
