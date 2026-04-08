@@ -1,11 +1,7 @@
 import {
   Injectable,
-  NotFoundException,
-  BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
 import { AttendanceSessionService } from './attendance-session.service';
 import { AttendanceFinalizationService } from './attendance-finalization.service';
 import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString } from '../common/utils/ist-date.util';
@@ -15,67 +11,6 @@ const LATE_HOUR = 10;
 const LATE_MINUTE = 30;
 const HALF_DAY_CHECKIN_HOUR = 12;
 const HALF_DAY_CHECKIN_MINUTE = 30;
-const HALF_DAY_HOURS = 4;
-const MAX_SESSION_HOURS = 12; // matches AttendanceSessionService.MAX_SESSION_HOURS
-
-type AttendanceStatusValue = 'PRESENT' | 'LATE' | 'HALF_DAY' | 'WFH' | 'ABSENT';
-
-/**
- * Compute a real-time attendance status from live session data.
- * Uses the same priority and thresholds as AttendanceFinalizationService.calculateDailyStatus().
- *
- * Priority: WFH > HALF_DAY > LATE > PRESENT
- *
- * @param isWfh - true if the employee is permanent WFH or has an approved WFH request for today
- */
-function calculateLiveStatus(
-  sessions: Array<{ checkIn: string | Date; checkOut: string | Date | null }>,
-  isWfh: boolean = false,
-): AttendanceStatusValue {
-  // WFH takes priority — check before anything else
-  if (isWfh) {
-    if (!sessions || sessions.length === 0) return 'WFH';
-    // Still compute firstCheckIn/totalHours for display, but status is WFH
-    return 'WFH';
-  }
-
-  if (!sessions || sessions.length === 0) return 'ABSENT';
-
-  // Sort ascending by checkIn
-  const sorted = [...sessions].sort(
-    (a, b) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
-  );
-
-  const firstCheckIn = new Date(sorted[0].checkIn);
-
-  // Total hours — include ongoing open sessions using current time as end.
-  // Cap each session at MAX_SESSION_HOURS to prevent stale/cross-day inflation.
-  const now = new Date();
-  const maxSessionMs = MAX_SESSION_HOURS * 60 * 60 * 1000;
-  const totalHours = sorted.reduce((sum, s) => {
-    const start = new Date(s.checkIn);
-    const end = s.checkOut ? new Date(s.checkOut) : now;
-    const rawDuration = end.getTime() - start.getTime();
-    // Skip invalid/negative durations (clock skew, bad data)
-    if (rawDuration <= 0) return sum;
-    // Cap at MAX_SESSION_HOURS to guard against cross-day or stale sessions
-    const duration = Math.min(rawDuration, maxSessionMs);
-    return sum + duration / (1000 * 60 * 60);
-  }, 0);
-
-  // Compute IST thresholds relative to the check-in day
-  const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, firstCheckIn);
-  const halfDayCheckInThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, firstCheckIn);
-
-  // HALF_DAY: very late check-in OR short hours
-  if (firstCheckIn > halfDayCheckInThreshold) return 'HALF_DAY';
-  if (totalHours > 0 && totalHours < HALF_DAY_HOURS) return 'HALF_DAY';
-
-  // LATE: check-in after 10:30 AM IST
-  if (firstCheckIn > lateThreshold) return 'LATE';
-
-  return 'PRESENT';
-}
 
 @Injectable()
 export class AttendanceService {
@@ -132,18 +67,32 @@ export class AttendanceService {
     const where: any = {};
 
     // Role-based scoping
+    let scopedUserIds: string[] | null = null;
     if (userRole === 'EMPLOYEE') {
       where.userId = user.id;
+      scopedUserIds = [user.id];
     } else if (userRole === 'TEAM_LEAD') {
       const teamMemberIds = await this.getTeamMemberIds(user.id);
       where.userId = { in: teamMemberIds };
+      scopedUserIds = teamMemberIds;
     }
     // ADMIN: no restriction
 
     // Explicit userId filter (admin/team lead only)
     if (filters.userId && userRole !== 'EMPLOYEE') {
       where.userId = filters.userId;
+      scopedUserIds = [filters.userId];
     }
+
+    // Resolve all employee IDs in scope (needed for today's absent injection)
+    const employeeWhere: any = {
+      status: 'ACTIVE',
+      roles: { some: { role: { name: { not: 'ADMIN' } } } },
+    };
+    if (scopedUserIds) employeeWhere.id = { in: scopedUserIds };
+    const allEmployeeIds: string[] = scopedUserIds ?? await this.prisma.user
+      .findMany({ where: employeeWhere, select: { id: true } })
+      .then((rows) => rows.map((r) => r.id));
 
     // Status filter
     if (filters.status) {
@@ -204,54 +153,84 @@ export class AttendanceService {
     const statusFilterActive = !!filters.status;
 
     if (hasToday && !todayAlreadyFinalized) {
-      const liveData = await this.sessionService.getAllSessions(
-        { startDate: todayStr, endDate: todayStr },
-        user,
-      );
-
-      // Fetch WFH context for all users in the live result in one query
-      const liveUserIds = liveData.data.map((r: any) => r.userId);
       const todayIST = getISTStartOfDay();
 
-      // Approved WFH requests covering today
-      const wfhRequests = liveUserIds.length > 0
-        ? await this.prisma.wfhRequest.findMany({
-            where: {
-              userId: { in: liveUserIds },
-              status: 'APPROVED',
-              fromDate: { lte: todayIST },
-              toDate: { gte: todayIST },
-            },
-            select: { userId: true },
-          })
-        : [];
-      const wfhRequestUserIds = new Set(wfhRequests.map((r) => r.userId));
+      // Fetch all today's sessions for scoped users
+      const sessionWhere: any = {
+        checkIn: { gte: todayIST, lt: getISTStartOfNextDay() },
+      };
+      if (allEmployeeIds.length > 0) sessionWhere.userId = { in: allEmployeeIds };
 
-      // Permanent WFH employees
-      const permanentWfhUsers = liveUserIds.length > 0
-        ? await this.prisma.user.findMany({
-            where: { id: { in: liveUserIds }, workMode: 'WFH' },
-            select: { id: true },
-          })
-        : [];
-      const permanentWfhUserIds = new Set(permanentWfhUsers.map((u) => u.id));
-
-      // Normalize live records: derive firstCheckIn/lastCheckOut from sessions
-      // sorted ascending so index 0 is always the earliest check-in.
-      // Compute a real status using the same logic as finalization — no temp labels.
-      const liveRecords = liveData.data.map((record: any) => {
-        const sorted = [...(record.sessions ?? [])].sort(
-          (a: any, b: any) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
-        );
-        const completedSorted = sorted.filter((s: any) => s.checkOut);
-        const isWfh = permanentWfhUserIds.has(record.userId) || wfhRequestUserIds.has(record.userId);
-        return {
-          ...record,
-          firstCheckIn: sorted[0]?.checkIn ?? null,
-          lastCheckOut: completedSorted.at(-1)?.checkOut ?? null,
-          status: calculateLiveStatus(record.sessions ?? [], isWfh),
-        };
+      const todaySessions = await this.prisma.attendanceSession.findMany({
+        where: sessionWhere,
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, email: true, department: true } },
+        },
+        orderBy: { checkIn: 'asc' },
       });
+
+      // Group sessions by userId
+      const sessionsByUser = new Map<string, typeof todaySessions>();
+      for (const s of todaySessions) {
+        if (!sessionsByUser.has(s.userId)) sessionsByUser.set(s.userId, []);
+        sessionsByUser.get(s.userId)!.push(s);
+      }
+
+      // Determine which users to process for today (allEmployeeIds already accounts for userId filter)
+      const todayUserIds = allEmployeeIds;
+
+      // Fetch WFH context for all today's users in one query
+      const [wfhRequests, permanentWfhUsers, userMap] = await Promise.all([
+        this.prisma.wfhRequest.findMany({
+          where: {
+            userId: { in: todayUserIds },
+            status: 'APPROVED',
+            fromDate: { lte: todayIST },
+            toDate: { gte: todayIST },
+          },
+          select: { userId: true },
+        }),
+        this.prisma.user.findMany({
+          where: { id: { in: todayUserIds }, workMode: 'WFH' },
+          select: { id: true },
+        }),
+        this.prisma.user.findMany({
+          where: { id: { in: todayUserIds } },
+          select: { id: true, firstName: true, lastName: true, email: true, department: true },
+        }),
+      ]);
+
+      const wfhRequestUserIds = new Set(wfhRequests.map((r) => r.userId));
+      const permanentWfhUserIds = new Set(permanentWfhUsers.map((u) => u.id));
+      const userInfoMap = new Map(userMap.map((u) => [u.id, u]));
+
+      const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayIST);
+      const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayIST);
+
+      const liveRecords: any[] = [];
+
+      for (const uid of todayUserIds) {
+        const sessions = sessionsByUser.get(uid) ?? [];
+        const isWfh = permanentWfhUserIds.has(uid) || wfhRequestUserIds.has(uid);
+        const { status, firstCheckIn, lastCheckOut, totalHours } =
+          this.finalizationService.calculateDailyStatus(sessions, lateThreshold, halfDayThreshold, isWfh);
+
+        const userInfo = userInfoMap.get(uid);
+        const sorted = [...sessions].sort(
+          (a, b) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime(),
+        );
+
+        liveRecords.push({
+          userId: uid,
+          user: userInfo ?? null,
+          date: todayStr,
+          firstCheckIn: firstCheckIn?.toISOString() ?? null,
+          lastCheckOut: lastCheckOut?.toISOString() ?? null,
+          totalHours: Math.round(totalHours * 100) / 100,
+          status,
+          sessions: sorted,
+        });
+      }
 
       // If a status filter is active, only include today's records that match
       const toInject = statusFilterActive
@@ -261,9 +240,15 @@ export class AttendanceService {
       data.unshift(...toInject);
     }
 
+    // Count how many live records were injected for today (before status filter)
+    // We track this via allEmployeeIds length when today is in range and not finalized
+    const liveInjectedCount = (hasToday && !todayAlreadyFinalized)
+      ? (filters.userId && userRole !== 'EMPLOYEE' ? 1 : allEmployeeIds.length)
+      : 0;
+
     return {
       data,
-      total: total + (hasToday && !todayAlreadyFinalized ? 1 : 0),
+      total: total + liveInjectedCount,
       page: pageNumber,
       limit: limitNumber,
       totalPages: Math.ceil(total / limitNumber),
