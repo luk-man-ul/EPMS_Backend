@@ -113,22 +113,25 @@ export class AttendanceFinalizationService {
     }
 
     // ── Step 2b: Fetch all approved WFH requests covering this day ───────────
+    // WfhRequest.fromDate/toDate are @db.Date stored as UTC midnight of the IST date.
+    // Use istDate (UTC midnight) for comparison — not dayStart (IST midnight as UTC).
     const wfhRequests = await this.prisma.wfhRequest.findMany({
       where: {
         status: 'APPROVED',
-        fromDate: { lte: dayStart },
-        toDate: { gte: dayStart },
+        fromDate: { lte: istDate },
+        toDate: { gte: istDate },
       },
       select: { userId: true },
     });
     const wfhUserIds = new Set(wfhRequests.map((r) => r.userId));
 
     // ── Step 2c: Fetch all approved Leave requests covering this day ──────────
+    // LeaveRequest.startDate/endDate are @db.Date — same normalization required.
     const leaveRequests = await this.prisma.leaveRequest.findMany({
       where: {
         status: 'APPROVED',
-        startDate: { lte: dayStart },
-        endDate: { gte: dayStart },
+        startDate: { lte: istDate },
+        endDate: { gte: istDate },
       },
       select: { userId: true },
     });

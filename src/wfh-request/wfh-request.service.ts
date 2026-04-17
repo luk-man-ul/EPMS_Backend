@@ -6,16 +6,16 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWfhRequestDto } from './dto/create-wfh-request.dto';
-import { getISTStartOfDay } from '../common/utils/ist-date.util';
+import { toISTDate } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class WfhRequestService {
   constructor(private prisma: PrismaService) {}
 
   async createRequest(userId: string, dto: CreateWfhRequestDto) {
-    // Normalize to IST start-of-day for clean date comparison
-    const fromDate = getISTStartOfDay(new Date(dto.fromDate));
-    const toDate = getISTStartOfDay(new Date(dto.toDate));
+    // Normalize to UTC midnight of the IST calendar date for correct @db.Date storage
+    const fromDate = toISTDate(new Date(dto.fromDate));
+    const toDate   = toISTDate(new Date(dto.toDate));
 
     if (fromDate > toDate) {
       throw new BadRequestException('fromDate cannot be after toDate');

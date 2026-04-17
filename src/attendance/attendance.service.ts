@@ -179,13 +179,15 @@ export class AttendanceService {
       const todayUserIds = allEmployeeIds;
 
       // Fetch WFH context for all today's users in one query
+      // WfhRequest/LeaveRequest dates are @db.Date stored as UTC midnight — use toISTDate() for comparison.
+      const todayISTDate = toISTDate(todayIST);
       const [wfhRequests, permanentWfhUsers, userMap, leaveRequests] = await Promise.all([
         this.prisma.wfhRequest.findMany({
           where: {
             userId: { in: todayUserIds },
             status: 'APPROVED',
-            fromDate: { lte: todayIST },
-            toDate: { gte: todayIST },
+            fromDate: { lte: todayISTDate },
+            toDate: { gte: todayISTDate },
           },
           select: { userId: true },
         }),
@@ -201,8 +203,8 @@ export class AttendanceService {
           where: {
             userId: { in: todayUserIds },
             status: 'APPROVED',
-            startDate: { lte: todayIST },
-            endDate: { gte: todayIST },
+            startDate: { lte: todayISTDate },
+            endDate: { gte: todayISTDate },
           },
           select: { userId: true },
         }),
@@ -364,13 +366,15 @@ export class AttendanceService {
       }
 
       // Fetch WFH context (workMode + approved requests) for all employees
+      // WfhRequest/LeaveRequest dates are @db.Date stored as UTC midnight — use toISTDate() for comparison.
+      const todayISTDate = toISTDate(todayIST);
       const [wfhRequests, permanentWfhUsers, onLeaveUsers] = await Promise.all([
         this.prisma.wfhRequest.findMany({
           where: {
             userId: { in: allEmployeeIds },
             status: 'APPROVED',
-            fromDate: { lte: todayIST },
-            toDate: { gte: todayIST },
+            fromDate: { lte: todayISTDate },
+            toDate: { gte: todayISTDate },
           },
           select: { userId: true },
         }),
@@ -382,8 +386,8 @@ export class AttendanceService {
           where: {
             userId: { in: allEmployeeIds },
             status: 'APPROVED',
-            startDate: { lte: todayIST },
-            endDate: { gte: todayIST },
+            startDate: { lte: todayISTDate },
+            endDate: { gte: todayISTDate },
           },
           select: { userId: true },
         }),
