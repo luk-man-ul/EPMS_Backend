@@ -5,6 +5,7 @@ import {
   getISTStartOfNextDay,
   getISTTimeToday,
   toISTDateString,
+  toISTDate,
 } from '../common/utils/ist-date.util';
 
 /**
@@ -29,6 +30,37 @@ export class AttendanceFinalizationService {
   private readonly HALF_DAY_CHECKIN_MINUTE = 30;
   private readonly HALF_DAY_HOURS = 4;
 
+  // Office geofence — must match AttendanceSessionService constants
+  private readonly OFFICE_LATITUDE = 11.982748317280704;
+  private readonly OFFICE_LONGITUDE = 75.36459629666871;
+  private readonly ALLOWED_RADIUS_METERS = 250;
+
+  /**
+   * Haversine distance between two GPS coordinates.
+   * Returns distance in meters.
+   */
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371e3;
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /**
+   * Returns true if the given coordinates are outside the office geofence.
+   */
+  private isOutsideOffice(lat: number, lng: number): boolean {
+    return (
+      this.calculateDistance(lat, lng, this.OFFICE_LATITUDE, this.OFFICE_LONGITUDE) >
+      this.ALLOWED_RADIUS_METERS
+    );
+  }
+
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -39,6 +71,8 @@ export class AttendanceFinalizationService {
     const dayStart = getISTStartOfDay(targetDate);
     const dayEnd = getISTStartOfNextDay(targetDate);
     const dateStr = toISTDateString(dayStart);
+    // UTC midnight of the IST calendar date — correct value for @db.Date columns
+    const istDate = toISTDate(dayStart);
 
     this.logger.log(`Starting attendance finalization for IST date: ${dateStr}`);
 
@@ -64,6 +98,8 @@ export class AttendanceFinalizationService {
         userId: true,
         checkIn: true,
         checkOut: true,
+        latitude: true,
+        longitude: true,
       },
     });
 
@@ -87,6 +123,17 @@ export class AttendanceFinalizationService {
     });
     const wfhUserIds = new Set(wfhRequests.map((r) => r.userId));
 
+    // ── Step 2c: Fetch all approved Leave requests covering this day ──────────
+    const leaveRequests = await this.prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: dayStart },
+        endDate: { gte: dayStart },
+      },
+      select: { userId: true },
+    });
+    const leaveUserIds = new Set(leaveRequests.map((r) => r.userId));
+
     const lateThreshold = getISTTimeToday(this.LATE_HOUR, this.LATE_MINUTE, dayStart);
     const halfDayCheckInThreshold = getISTTimeToday(this.HALF_DAY_CHECKIN_HOUR, this.HALF_DAY_CHECKIN_MINUTE, dayStart);
     let finalized = 0;
@@ -96,12 +143,11 @@ export class AttendanceFinalizationService {
     for (const employee of employees) {
       const sessions = sessionsByUser.get(employee.id) ?? [];
 
-      // isWfh: true if employee has a session AND (permanent WFH or approved WFH request)
-      // calculateDailyStatus will return ABSENT if no sessions regardless of isWfh
       const isWfh = employee.workMode === 'WFH' || wfhUserIds.has(employee.id);
+      const isOnLeave = leaveUserIds.has(employee.id);
 
       const { status, firstCheckIn, lastCheckOut, totalHours } =
-        this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold, isWfh);
+        this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold, isWfh, isOnLeave);
 
       if (status === 'ABSENT') {
         absent++;
@@ -114,12 +160,12 @@ export class AttendanceFinalizationService {
         where: {
           userId_date: {
             userId: employee.id,
-            date: dayStart,
+            date: istDate,
           },
         },
         create: {
           userId: employee.id,
-          date: dayStart,
+          date: istDate,
           // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
           firstCheckIn,
           lastCheckOut,
@@ -149,29 +195,38 @@ export class AttendanceFinalizationService {
    * Public so AttendanceService can reuse this for live-today stats.
    *
    * Rules (IST):
-   *   - No sessions                               → ABSENT
-   *   - Has session + workMode WFH (or approved WFH request) → WFH
-   *   - Has session + checked out + totalHours < 4 → HALF_DAY
-   *   - Has session + firstCheckIn > 11:00 AM     → LATE
-   *   - Has session otherwise                     → PRESENT
+   *   - No sessions + on approved leave              → LEAVE
+   *   - No sessions                                  → ABSENT
+   *   - Has session + WFH eligible + outside office  → WFH
+   *   - Has session + checked out + totalHours < 4   → HALF_DAY
+   *   - Has session + firstCheckIn > 11:00 AM        → LATE
+   *   - Has session otherwise                        → PRESENT
    */
   calculateDailyStatus(
     sessions: Array<{
       checkIn: Date;
       checkOut: Date | null;
+      latitude?: number | null;
+      longitude?: number | null;
     }>,
     lateThreshold: Date,
     halfDayCheckInThreshold: Date,
     isWfh: boolean = false,
+    isOnLeave: boolean = false,
   ): {
-    status: 'PRESENT' | 'ABSENT' | 'LATE' | 'HALF_DAY' | 'WFH';
+    status: 'PRESENT' | 'ABSENT' | 'LATE' | 'HALF_DAY' | 'WFH' | 'LEAVE';
     firstCheckIn: Date | null;
     lastCheckOut: Date | null;
     totalHours: number;
   } {
-    // No session → ABSENT regardless of WFH status
+    // No session → LEAVE if on approved leave, otherwise ABSENT
     if (sessions.length === 0) {
-      return { status: 'ABSENT', firstCheckIn: null, lastCheckOut: null, totalHours: 0 };
+      return {
+        status: isOnLeave ? 'LEAVE' : 'ABSENT',
+        firstCheckIn: null,
+        lastCheckOut: null,
+        totalHours: 0,
+      };
     }
 
     // First check-in (earliest)
@@ -198,9 +253,22 @@ export class AttendanceFinalizationService {
 
     const roundedHours = Math.round(totalHours * 100) / 100;
 
-    // 1. WFH — user has session AND is WFH (by workMode or approved request)
+    // 1. WFH — eligible AND checked in from outside office
+    //    If eligible but inside office → treat as normal onsite (PRESENT/LATE/HALF_DAY)
     if (isWfh) {
-      return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+      // Use the earliest session's location to determine work location
+      const earliestSession = sessions.reduce(
+        (min, s) => (s.checkIn < min.checkIn ? s : min),
+        sessions[0],
+      );
+      const lat = earliestSession.latitude;
+      const lng = earliestSession.longitude;
+
+      // If location data is available and user is outside office → WFH
+      // If location is missing or user is inside office → fall through to onsite logic
+      if (lat != null && lng != null && this.isOutsideOffice(lat, lng)) {
+        return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
+      }
     }
 
     // 2. HALF_DAY — has checked out AND totalHours < 4

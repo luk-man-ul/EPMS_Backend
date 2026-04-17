@@ -59,3 +59,18 @@ export function getISTTimeToday(hours: number, minutes: number, date?: Date): Da
   const startOfDay = getISTStartOfDay(date);
   return new Date(startOfDay.getTime() + (hours * 60 + minutes) * 60 * 1000);
 }
+
+/**
+ * Returns a Date representing UTC midnight of the IST calendar date for the given UTC Date.
+ *
+ * Use this when writing to Prisma @db.Date columns.
+ * PostgreSQL stores @db.Date using the UTC date of the provided Date object.
+ * Without this, a dayStart of 2026-04-16T18:30:00Z (= IST Apr 17 midnight)
+ * would be stored as Apr 16 in the DB — one day behind.
+ *
+ * e.g. input 2026-04-16T18:30:00Z (IST Apr 17) → returns 2026-04-17T00:00:00.000Z
+ */
+export function toISTDate(date: Date): Date {
+  const istDateStr = toISTDateString(date);
+  return new Date(`${istDateStr}T00:00:00.000Z`);
+}

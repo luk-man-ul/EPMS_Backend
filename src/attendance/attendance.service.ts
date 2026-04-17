@@ -4,7 +4,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AttendanceSessionService } from './attendance-session.service';
 import { AttendanceFinalizationService } from './attendance-finalization.service';
-import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString } from '../common/utils/ist-date.util';
+import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString, toISTDate } from '../common/utils/ist-date.util';
 
 // IST thresholds — must match attendance-finalization.service.ts
 const LATE_HOUR = 11;
@@ -99,15 +99,15 @@ export class AttendanceService {
       where.status = filters.status;
     }
 
-    // Date range filter — Attendance.date is @db.Date stored as UTC midnight
+    // Date range filter — Attendance.date is @db.Date stored as UTC midnight of the IST date
     if (filters.startDate) {
-      where.date = { ...where.date, gte: new Date(filters.startDate) };
+      where.date = { ...where.date, gte: new Date(`${filters.startDate}T00:00:00.000Z`) };
     }
     if (filters.endDate) {
-      const end = new Date(filters.endDate);
-      const nextDay = new Date(end);
-      nextDay.setUTCDate(end.getUTCDate() + 1);
-      where.date = { ...where.date, lt: nextDay };
+      // lt: day after endDate (UTC midnight)
+      const endDateStr = filters.endDate as string;
+      const endPlusOne = new Date(new Date(`${endDateStr}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000);
+      where.date = { ...where.date, lt: endPlusOne };
     }
 
     const pageNumber = Number(filters.page) || 1;
@@ -168,7 +168,6 @@ export class AttendanceService {
         },
         orderBy: { checkIn: 'asc' },
       });
-
       // Group sessions by userId
       const sessionsByUser = new Map<string, typeof todaySessions>();
       for (const s of todaySessions) {
@@ -180,7 +179,7 @@ export class AttendanceService {
       const todayUserIds = allEmployeeIds;
 
       // Fetch WFH context for all today's users in one query
-      const [wfhRequests, permanentWfhUsers, userMap] = await Promise.all([
+      const [wfhRequests, permanentWfhUsers, userMap, leaveRequests] = await Promise.all([
         this.prisma.wfhRequest.findMany({
           where: {
             userId: { in: todayUserIds },
@@ -198,11 +197,21 @@ export class AttendanceService {
           where: { id: { in: todayUserIds } },
           select: { id: true, firstName: true, lastName: true, email: true, department: true },
         }),
+        this.prisma.leaveRequest.findMany({
+          where: {
+            userId: { in: todayUserIds },
+            status: 'APPROVED',
+            startDate: { lte: todayIST },
+            endDate: { gte: todayIST },
+          },
+          select: { userId: true },
+        }),
       ]);
 
       const wfhRequestUserIds = new Set(wfhRequests.map((r) => r.userId));
       const permanentWfhUserIds = new Set(permanentWfhUsers.map((u) => u.id));
       const userInfoMap = new Map(userMap.map((u) => [u.id, u]));
+      const leaveUserIds = new Set(leaveRequests.map((r) => r.userId));
 
       const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayIST);
       const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayIST);
@@ -212,8 +221,9 @@ export class AttendanceService {
       for (const uid of todayUserIds) {
         const sessions = sessionsByUser.get(uid) ?? [];
         const isWfh = permanentWfhUserIds.has(uid) || wfhRequestUserIds.has(uid);
+        const isOnLeave = leaveUserIds.has(uid);
         const { status, firstCheckIn, lastCheckOut, totalHours } =
-          this.finalizationService.calculateDailyStatus(sessions, lateThreshold, halfDayThreshold, isWfh);
+          this.finalizationService.calculateDailyStatus(sessions, lateThreshold, halfDayThreshold, isWfh, isOnLeave);
 
         const userInfo = userInfoMap.get(uid);
         const sorted = [...sessions].sort(
@@ -313,7 +323,13 @@ export class AttendanceService {
     ]);
 
     // ── 4. Fetch finalized Attendance rows ───────────────────────────────────
-    const attendanceWhere: any = { date: { gte: startIST, lt: endIST } };
+    // Attendance.date is stored as UTC midnight of the IST calendar date.
+    // Build query boundaries as UTC midnight values from the YYYY-MM-DD strings.
+    const attendanceDateStart = new Date(`${startDate}T00:00:00.000Z`);
+    const attendanceDateEnd   = new Date(`${endDate}T00:00:00.000Z`);
+    attendanceDateEnd.setUTCDate(attendanceDateEnd.getUTCDate() + 1); // lt: day after endDate
+
+    const attendanceWhere: any = { date: { gte: attendanceDateStart, lt: attendanceDateEnd } };
     if (scopedUserIds) attendanceWhere.userId = { in: scopedUserIds };
 
     const attendanceRows = await this.prisma.attendance.findMany({
@@ -338,7 +354,7 @@ export class AttendanceService {
 
       const todaySessions = await this.prisma.attendanceSession.findMany({
         where: sessionWhere,
-        select: { userId: true, checkIn: true, checkOut: true },
+        select: { userId: true, checkIn: true, checkOut: true, latitude: true, longitude: true },
       });
 
       const sessionsByUser = new Map<string, typeof todaySessions>();
@@ -382,17 +398,12 @@ export class AttendanceService {
       for (const uid of allEmployeeIds) {
         const sessions = sessionsByUser.get(uid) ?? [];
         const isWfh = permanentWfhIds.has(uid) || wfhRequestIds.has(uid);
+        const isOnLeave = onLeaveIds.has(uid);
 
-        if (sessions.length === 0) {
-          // No session: ON_LEAVE or ABSENT
-          const status = onLeaveIds.has(uid) ? 'LEAVE' : 'ABSENT';
-          liveRows.push({ userId: uid, status, date: todayStr });
-        } else {
-          const { status } = this.finalizationService.calculateDailyStatus(
-            sessions, lateThreshold, halfDayThreshold, isWfh,
-          );
-          liveRows.push({ userId: uid, status, date: todayStr });
-        }
+        const { status } = this.finalizationService.calculateDailyStatus(
+          sessions, lateThreshold, halfDayThreshold, isWfh, isOnLeave,
+        );
+        liveRows.push({ userId: uid, status, date: todayStr });
       }
     }
 
