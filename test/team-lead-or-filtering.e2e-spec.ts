@@ -294,7 +294,7 @@ describe('TEAM_LEAD OR-Based Filtering (e2e)', () => {
   async function cleanupTestData() {
     // Delete in correct order to respect foreign key constraints
     await prisma.ticketStatusHistory.deleteMany({});
-    await prisma.ticketComment.deleteMany({});
+    await prisma.comment.deleteMany({});
     await prisma.ticket.deleteMany({});
     await prisma.taskStatusHistory.deleteMany({});
     await prisma.timeLog.deleteMany({});

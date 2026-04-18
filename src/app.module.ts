@@ -25,6 +25,7 @@ import { ChatModule } from './chat/chat.module';
 import { FilesModule } from './files/files.module';
 import { AdminModule } from './admin/admin.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { CommentsModule } from './comments/comments.module';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { HealthController } from './health/health.controller';
 
@@ -52,6 +53,7 @@ import { HealthController } from './health/health.controller';
     ChatModule,
     FilesModule,
     AdminModule,
+    CommentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

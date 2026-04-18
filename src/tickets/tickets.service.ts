@@ -12,12 +12,14 @@ import { UpdateTicketPriorityDto } from './dto/update-ticket-priority.dto';
 import { TicketFilterDto } from './dto/ticket-filter.dto';
 import { TicketStatus } from '@prisma/client';
 import { TicketWorkflowService } from './ticket-workflow.service';
+import { CommentsService } from '../comments/comments.service';
 
 @Injectable()
 export class TicketsService {
   constructor(
     private prisma: PrismaService,
     private workflow: TicketWorkflowService,
+    private commentsService: CommentsService,
   ) {}
 
   ////////////////////////////////////////////////////////////////
@@ -213,7 +215,6 @@ export class TicketsService {
     },
   },
 },
-        comments: true,
         statusHistory: {
           include: {
             changedBy: true,
@@ -252,6 +253,9 @@ export class TicketsService {
       }
     }
 
+    // Fetch comments from generic Comment table
+    const comments = await this.commentsService.getComments('ticket', id);
+
     // 🔥 Transform response to match frontend contract
     // Construct plain object to avoid Prisma type conflicts
     return {
@@ -273,7 +277,7 @@ export class TicketsService {
       reporter: ticket.reporter,
       assignee: ticket.assignee,
       project: ticket.project,
-      comments: ticket.comments,
+      comments,
       statusHistory: ticket.statusHistory.map((entry) => ({
         id: entry.id,
         ticketId: entry.ticketId,
