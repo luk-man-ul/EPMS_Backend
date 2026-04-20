@@ -513,6 +513,12 @@ private async createTask(dto: CreateTaskDto, userId: string) {
             select: { id: true, name: true },
           },
           assignee: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+          creator: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+          approvedBy: {
             select: { id: true, firstName: true, lastName: true },
           },
         },
