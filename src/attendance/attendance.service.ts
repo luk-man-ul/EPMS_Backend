@@ -441,7 +441,7 @@ export class AttendanceService {
       return { totalEmployees, ...raw };
     }
 
-    // ── 9. Range mode: aggregate all rows, then normalize by totalDays ────────
+    // ── 9. Range mode: count raw totals across all days ──────────────────────
     for (const row of allRows) applyStatus(row.status);
 
     const totalDays = Math.round(
@@ -462,21 +462,23 @@ export class AttendanceService {
       }
     }
 
-    const round1 = (n: number) => Math.round(n / totalDays * 10) / 10;
-
+    // attendanceRate = % of employee-days where the employee was present
     const attendanceRate = totalEmployees > 0 && totalDays > 0
       ? Math.round((raw.present / (totalEmployees * totalDays)) * 1000) / 10
       : 0;
 
+    // Return raw integer counts — no averaging or division.
+    // The frontend receives the same shape as single-day mode.
+    // attendanceRate (%) is the only derived value, kept in meta.
     return {
       totalEmployees,
-      present:  round1(raw.present),
-      onsite:   round1(raw.onsite),
-      wfh:      round1(raw.wfh),
-      late:     round1(raw.late),
-      halfDay:  round1(raw.halfDay),
-      onLeave:  round1(raw.onLeave),
-      absent:   round1(raw.absent),
+      present:  raw.present,
+      onsite:   raw.onsite,
+      wfh:      raw.wfh,
+      late:     raw.late,
+      halfDay:  raw.halfDay,
+      onLeave:  raw.onLeave,
+      absent:   raw.absent,
       meta: {
         mode: 'range',
         totalDays,
