@@ -221,15 +221,18 @@ export class AttendanceSessionService {
    *   2. The user's default workMode is WFH
    */
   private async isWfhAllowed(userId: string): Promise<boolean> {
-    const todayIST = getISTStartOfDay();
+    // toISTDate() produces UTC midnight of the IST calendar date (T00:00:00Z),
+    // which matches how WfhRequest.fromDate/toDate are stored (@db.Date fields).
+    // getISTStartOfDay() returns T18:30:00Z — wrong for @db.Date comparisons.
+    const todayISTDate = toISTDate(new Date());
 
     // Check for an approved WFH request covering today (IST)
     const approvedRequest = await this.prisma.wfhRequest.findFirst({
       where: {
         userId,
         status: 'APPROVED',
-        fromDate: { lte: todayIST },
-        toDate: { gte: todayIST },
+        fromDate: { lte: todayISTDate },
+        toDate: { gte: todayISTDate },
       },
     });
 
@@ -496,22 +499,16 @@ export class AttendanceSessionService {
     }
     // ADMIN: no filtering
 
-    // Date range filtering
+    // Date range filtering — use IST day boundaries to avoid UTC date shift
     if (filters.startDate && filters.endDate) {
-      const end = new Date(filters.endDate);
-      const nextDay = new Date(end);
-      nextDay.setUTCDate(end.getUTCDate() + 1);
       where.checkIn = {
-        gte: new Date(filters.startDate),
-        lt: nextDay,
+        gte: getISTStartOfDay(new Date(`${filters.startDate}T12:00:00`)),
+        lt: getISTStartOfNextDay(new Date(`${filters.endDate}T12:00:00`)),
       };
     } else if (filters.startDate) {
-      where.checkIn = { gte: new Date(filters.startDate) };
+      where.checkIn = { gte: getISTStartOfDay(new Date(`${filters.startDate}T12:00:00`)) };
     } else if (filters.endDate) {
-      const end = new Date(filters.endDate);
-      const nextDay = new Date(end);
-      nextDay.setUTCDate(end.getUTCDate() + 1);
-      where.checkIn = { lt: nextDay };
+      where.checkIn = { lt: getISTStartOfNextDay(new Date(`${filters.endDate}T12:00:00`)) };
     }
 
     // User filter (for admins/team leads)

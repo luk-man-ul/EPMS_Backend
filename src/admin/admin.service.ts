@@ -1,14 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { getISTStartOfDay, getISTStartOfNextDay } from '../common/utils/ist-date.util';
+import { getISTStartOfDay, getISTStartOfNextDay, toISTDate } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
   async getDashboardStats() {
-    const today = getISTStartOfDay();
-    const nextDay = getISTStartOfNextDay();
+    const today = getISTStartOfDay();       // T18:30:00Z — used for DateTime (checkIn) queries
+    const nextDay = getISTStartOfNextDay(); // T18:30:00Z next day — used for DateTime range
+    const todayISTDate = toISTDate(new Date()); // T00:00:00Z — used for @db.Date (Attendance.date) queries
 
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -68,10 +69,11 @@ export class AdminService {
       }),
 
       // Today's finalized Attendance summaries (written by finalization cron)
-      // Falls back to live AttendanceSession count if finalization hasn't run yet
+      // Falls back to live AttendanceSession count if finalization hasn't run yet.
+      // Attendance.date is a @db.Date stored as UTC midnight (T00:00:00Z) — use todayISTDate.
       this.prisma.attendance.findMany({
         where: {
-          date: today,
+          date: todayISTDate,
         },
         select: {
           userId: true,

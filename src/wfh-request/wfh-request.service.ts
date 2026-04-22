@@ -161,10 +161,10 @@ export class WfhRequestService {
       where.userId = filters.userId;
     }
     if (filters.fromDate) {
-      where.fromDate = { gte: new Date(filters.fromDate) };
+      where.fromDate = { gte: toISTDate(new Date(filters.fromDate)) };
     }
     if (filters.toDate) {
-      where.toDate = { lte: new Date(filters.toDate) };
+      where.toDate = { lte: toISTDate(new Date(filters.toDate)) };
     }
 
     const pageNumber = Number(filters.page) || 1;

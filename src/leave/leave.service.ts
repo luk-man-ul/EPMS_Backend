@@ -6,14 +6,17 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { toISTDate } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class LeaveService {
   constructor(private prisma: PrismaService) {}
 
   async create(dto: any, userId: string) {
-    const startDate = new Date(dto.startDate);
-    const endDate = new Date(dto.endDate);
+    // Normalize to UTC midnight of the IST calendar date for correct @db.Date storage,
+    // consistent with WfhRequest and how finalization queries these fields.
+    const startDate = toISTDate(new Date(dto.startDate));
+    const endDate   = toISTDate(new Date(dto.endDate));
 
     if (startDate > endDate) {
       throw new BadRequestException('Start date cannot be after end date');
@@ -191,12 +194,12 @@ export class LeaveService {
       where.type = filters.type;
     }
     if (filters.startDate && filters.endDate) {
-      where.startDate = { gte: new Date(filters.startDate) };
-      where.endDate = { lte: new Date(filters.endDate) };
+      where.startDate = { gte: toISTDate(new Date(filters.startDate)) };
+      where.endDate   = { lte: toISTDate(new Date(filters.endDate)) };
     } else if (filters.startDate) {
-      where.startDate = { gte: new Date(filters.startDate) };
+      where.startDate = { gte: toISTDate(new Date(filters.startDate)) };
     } else if (filters.endDate) {
-      where.endDate = { lte: new Date(filters.endDate) };
+      where.endDate = { lte: toISTDate(new Date(filters.endDate)) };
     }
     if (filters.userId && userRole !== 'EMPLOYEE') {
       where.userId = filters.userId;

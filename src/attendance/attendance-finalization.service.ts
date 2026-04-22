@@ -197,13 +197,19 @@ export class AttendanceFinalizationService {
    * Determine the daily attendance status and metrics from a list of sessions.
    * Public so AttendanceService can reuse this for live-today stats.
    *
-   * Rules (IST):
-   *   - No sessions + on approved leave              → LEAVE
-   *   - No sessions                                  → ABSENT
-   *   - Has session + WFH eligible + outside office  → WFH
-   *   - Has session + checked out + totalHours < 4   → HALF_DAY
-   *   - Has session + firstCheckIn > 11:00 AM        → LATE
-   *   - Has session otherwise                        → PRESENT
+   * Priority order (IST):
+   *   1. No sessions + on approved leave              → LEAVE
+   *   2. No sessions                                  → ABSENT
+   *   3. Has session + WFH eligible + outside office  → WFH
+   *   4. Has session + all closed + totalHours < 4    → HALF_DAY (checked BEFORE LATE)
+   *   5. Has session + firstCheckIn > 11:00 AM        → LATE
+   *   6. Has session otherwise                        → PRESENT
+   *
+   * HALF_DAY is intentionally evaluated before LATE because working fewer than
+   * 4 hours is the more critical violation. An employee who arrives late but
+   * completes a full day is marked LATE. An employee who arrives on time but
+   * leaves early (< 4h) is marked HALF_DAY. An employee who arrives late AND
+   * works < 4h is marked HALF_DAY (the more severe status).
    */
   calculateDailyStatus(
     sessions: Array<{
@@ -259,27 +265,28 @@ export class AttendanceFinalizationService {
     // 1. WFH — eligible AND checked in from outside office
     //    If eligible but inside office → treat as normal onsite (PRESENT/LATE/HALF_DAY)
     if (isWfh) {
-      // Use the earliest session's location to determine work location
       const earliestSession = sessions.reduce(
         (min, s) => (s.checkIn < min.checkIn ? s : min),
         sessions[0],
       );
       const lat = earliestSession.latitude;
       const lng = earliestSession.longitude;
-
-      // If location data is available and user is outside office → WFH
-      // If location is missing or user is inside office → fall through to onsite logic
       if (lat != null && lng != null && this.isOutsideOffice(lat, lng)) {
         return { status: 'WFH', firstCheckIn, lastCheckOut, totalHours: roundedHours };
       }
     }
 
-    // 2. HALF_DAY — has checked out AND totalHours < 4
+    // 2. HALF_DAY — all sessions closed AND totalHours < 4
+    //    Evaluated BEFORE LATE: an employee who arrives late AND works < 4h
+    //    is HALF_DAY (the more severe outcome — they didn't complete a workday).
+    //    Requires lastCheckOut != null so a still-active session is never
+    //    prematurely classified as HALF_DAY mid-day.
     if (lastCheckOut !== null && roundedHours < this.HALF_DAY_HOURS) {
       return { status: 'HALF_DAY', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
 
     // 3. LATE — checked in after 11:00 AM IST
+    //    Only reached if the employee completed a full day (>= 4h or still active).
     if (firstCheckIn > lateThreshold) {
       return { status: 'LATE', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
