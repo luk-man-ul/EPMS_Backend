@@ -68,11 +68,17 @@ export class AttendanceFinalizationService {
    * Defaults to "today" (the day that just ended when called at 23:59 IST).
    */
   async finalizeDay(targetDate?: Date): Promise<{ finalized: number; absent: number }> {
+    console.log('=== FINALIZATION STARTED ===', new Date().toISOString());
+
     const dayStart = getISTStartOfDay(targetDate);
     const dayEnd = getISTStartOfNextDay(targetDate);
     const dateStr = toISTDateString(dayStart);
     // UTC midnight of the IST calendar date — correct value for @db.Date columns
     const istDate = toISTDate(dayStart);
+
+    console.log(`[FINALIZE] Target IST date: ${dateStr}`);
+    console.log(`[FINALIZE] Session window: ${dayStart.toISOString()} → ${dayEnd.toISOString()}`);
+    console.log(`[FINALIZE] DB date value (istDate): ${istDate.toISOString()}`);
 
     this.logger.log(`Starting attendance finalization for IST date: ${dateStr}`);
 
@@ -86,6 +92,11 @@ export class AttendanceFinalizationService {
       },
       select: { id: true, email: true, workMode: true },
     });
+
+    console.log(`[FINALIZE] Total employees found: ${employees.length}`);
+    if (employees.length === 0) {
+      console.warn('[FINALIZE] WARNING: No active non-admin employees found — loop will not run, Attendance table will not be written');
+    }
 
     this.logger.log(`Processing ${employees.length} employees for ${dateStr}`);
 
@@ -103,6 +114,8 @@ export class AttendanceFinalizationService {
       },
     });
 
+    console.log(`[FINALIZE] Total sessions found for ${dateStr}: ${allSessions.length}`);
+
     // Group sessions by userId
     const sessionsByUser = new Map<string, typeof allSessions>();
     for (const session of allSessions) {
@@ -113,8 +126,6 @@ export class AttendanceFinalizationService {
     }
 
     // ── Step 2b: Fetch all approved WFH requests covering this day ───────────
-    // WfhRequest.fromDate/toDate are @db.Date stored as UTC midnight of the IST date.
-    // Use istDate (UTC midnight) for comparison — not dayStart (IST midnight as UTC).
     const wfhRequests = await this.prisma.wfhRequest.findMany({
       where: {
         status: 'APPROVED',
@@ -126,7 +137,6 @@ export class AttendanceFinalizationService {
     const wfhUserIds = new Set(wfhRequests.map((r) => r.userId));
 
     // ── Step 2c: Fetch all approved Leave requests covering this day ──────────
-    // LeaveRequest.startDate/endDate are @db.Date — same normalization required.
     const leaveRequests = await this.prisma.leaveRequest.findMany({
       where: {
         status: 'APPROVED',
@@ -146,11 +156,15 @@ export class AttendanceFinalizationService {
     for (const employee of employees) {
       const sessions = sessionsByUser.get(employee.id) ?? [];
 
+      console.log(`[FINALIZE] Processing user: ${employee.email} | sessions: ${sessions.length}`);
+
       const isWfh = employee.workMode === 'WFH' || wfhUserIds.has(employee.id);
       const isOnLeave = leaveUserIds.has(employee.id);
 
       const { status, firstCheckIn, lastCheckOut, totalHours } =
         this.calculateDailyStatus(sessions, lateThreshold, halfDayCheckInThreshold, isWfh, isOnLeave);
+
+      console.log(`[FINALIZE] Computed status: ${status} | totalHours: ${totalHours} | firstCheckIn: ${firstCheckIn?.toISOString() ?? 'null'}`);
 
       if (status === 'ABSENT') {
         absent++;
@@ -158,37 +172,60 @@ export class AttendanceFinalizationService {
         finalized++;
       }
 
-      // UPSERT — safe to run multiple times (idempotent)
-      await this.prisma.attendance.upsert({
-        where: {
-          userId_date: {
+      const upsertData = {
+        userId: employee.id,
+        date: istDate.toISOString(),
+        status,
+        totalHours,
+        firstCheckIn: firstCheckIn?.toISOString() ?? null,
+        lastCheckOut: lastCheckOut?.toISOString() ?? null,
+      };
+      console.log('[FINALIZE] UPSERT DATA:', JSON.stringify(upsertData));
+
+      try {
+        // UPSERT — safe to run multiple times (idempotent)
+        await this.prisma.attendance.upsert({
+          where: {
+            userId_date: {
+              userId: employee.id,
+              date: istDate,
+            },
+          },
+          create: {
             userId: employee.id,
             date: istDate,
+            // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
+            firstCheckIn,
+            lastCheckOut,
+            totalHours,
+            status,
           },
-        },
-        create: {
-          userId: employee.id,
-          date: istDate,
-          // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
-          firstCheckIn,
-          lastCheckOut,
-          totalHours,
-          status,
-        },
-        update: {
-          // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
-          firstCheckIn,
-          lastCheckOut,
-          totalHours,
-          status,
-        },
-      });
+          update: {
+            // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
+            firstCheckIn,
+            lastCheckOut,
+            totalHours,
+            status,
+          },
+        });
+        console.log(`[FINALIZE] UPSERT SUCCESS for user: ${employee.email}`);
+      } catch (upsertErr: any) {
+        console.error(`[FINALIZE] UPSERT FAILED for user: ${employee.email}`, upsertErr?.message, upsertErr?.stack);
+      }
     }
+
+    // ── Verify: count records written ────────────────────────────────────────
+    const writtenCount = await this.prisma.attendance.count({
+      where: { date: istDate },
+    });
+    console.log(`[FINALIZE] Records in Attendance table for ${dateStr} after upsert: ${writtenCount}`);
 
     this.logger.log(
       `Finalization complete for ${dateStr} — ` +
       `Present/Late/WFH/HalfDay: ${finalized}, Absent: ${absent}`,
     );
+
+    console.log(`=== FINALIZATION COMPLETE === finalized: ${finalized}, absent: ${absent} ===`);
 
     return { finalized, absent };
   }

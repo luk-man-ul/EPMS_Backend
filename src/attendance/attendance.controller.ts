@@ -15,12 +15,19 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { IsOptional, IsDateString } from 'class-validator';
 import { AttendanceService } from './attendance.service';
 import { CheckInDto } from './dto/check-in.dto';
 import { AttendanceFilterDto } from './dto/attendance-filter.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
+
+class RunFinalizationDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string; // YYYY-MM-DD — which day to finalize; defaults to today
+}
 
 @ApiTags('attendance')
 @ApiBearerAuth()
@@ -95,5 +102,14 @@ export class AttendanceController {
   @ApiResponse({ status: 200, description: 'Long sessions checked out' })
   autoCheckoutLongSessions() {
     return this.attendanceService.autoCheckoutLongSessions();
+  }
+
+  @Permissions('attendance.admin')
+  @Post('admin/run-finalization')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Manually trigger attendance finalization (Admin) — for debugging and backfill' })
+  @ApiResponse({ status: 200, description: 'Finalization result with counts' })
+  runFinalization(@Body() dto: RunFinalizationDto) {
+    return this.attendanceService.runFinalization(dto.date);
   }
 }

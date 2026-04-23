@@ -59,6 +59,18 @@ export class AttendanceService {
   }
 
   /**
+   * Manual trigger for finalization — used for debugging and backfill.
+   * Pass targetDate as YYYY-MM-DD to finalize a specific past day.
+   * Defaults to today (IST) if no date provided.
+   */
+  async runFinalization(targetDateStr?: string): Promise<{ finalized: number; absent: number }> {
+    const targetDate = targetDateStr
+      ? new Date(`${targetDateStr}T12:00:00`)  // noon anchor avoids IST day shift
+      : undefined;
+    return this.finalizationService.finalizeDay(targetDate);
+  }
+
+  /**
    * Core query: reads from the Attendance (finalized) table.
    * For today (not yet finalized), merges live session data.
    */
