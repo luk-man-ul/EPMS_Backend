@@ -71,6 +71,52 @@ export class AttendanceService {
   }
 
   /**
+   * GET /attendance/sessions?userId=<id>&date=YYYY-MM-DD
+   *
+   * Returns all raw AttendanceSession rows for a specific user on a specific
+   * IST calendar day. Works for today, past days, and any future date.
+   *
+   * Uses the same IST day-boundary utilities as the rest of the system so
+   * sessions after 18:30 UTC (midnight IST) are never shifted to the wrong day.
+   */
+  async getSessionsByDate(
+    userId: string,
+    date: string,
+  ): Promise<Array<{
+    id: string;
+    checkIn: string;
+    checkOut: string | null;
+    duration: number | null;
+  }>> {
+    // Noon anchor: prevents IST day shift when constructing the Date object
+    const dayStart = getISTStartOfDay(new Date(`${date}T12:00:00`));
+    const dayEnd   = getISTStartOfNextDay(new Date(`${date}T12:00:00`));
+
+    const sessions = await this.prisma.attendanceSession.findMany({
+      where: {
+        userId,
+        checkIn: { gte: dayStart, lt: dayEnd },
+      },
+      orderBy: { checkIn: 'asc' },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+      },
+    });
+
+    return sessions.map((s) => ({
+      id: s.id,
+      checkIn: s.checkIn.toISOString(),
+      checkOut: s.checkOut?.toISOString() ?? null,
+      // duration in hours, rounded to 2 decimal places; null if session still open
+      duration: s.checkOut !== null
+        ? Math.round(((s.checkOut.getTime() - s.checkIn.getTime()) / 3_600_000) * 100) / 100
+        : null,
+    }));
+  }
+
+  /**
    * Core query: reads from the Attendance (finalized) table.
    * For today (not yet finalized), merges live session data.
    */

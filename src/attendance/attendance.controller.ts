@@ -8,10 +8,12 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
@@ -68,6 +70,25 @@ export class AttendanceController {
   @ApiResponse({ status: 200, description: "Returns today's attendance record" })
   getTodayAttendance(@Req() req) {
     return this.attendanceService.findTodayAttendance(req.user.id);
+  }
+
+  @Permissions('attendance.view')
+  @Get('sessions')
+  @ApiOperation({ summary: 'Get all check-in/check-out sessions for a user on a specific date' })
+  @ApiQuery({ name: 'userId', required: true,  description: 'User ID (UUID)' })
+  @ApiQuery({ name: 'date',   required: true,  description: 'IST calendar date (YYYY-MM-DD)' })
+  @ApiResponse({ status: 200, description: 'Returns session list with duration for the given user and date' })
+  getSessionsByDate(
+    @Query('userId') userId: string,
+    @Query('date')   date: string,
+  ) {
+    if (!userId) throw new BadRequestException('userId is required');
+    if (!date)   throw new BadRequestException('date is required');
+    // Basic YYYY-MM-DD format guard — rejects obviously malformed values early
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new BadRequestException('date must be in YYYY-MM-DD format');
+    }
+    return this.attendanceService.getSessionsByDate(userId, date);
   }
 
   @Permissions('attendance.view')
