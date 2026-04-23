@@ -194,14 +194,12 @@ export class AttendanceFinalizationService {
           create: {
             userId: employee.id,
             date: istDate,
-            // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
             firstCheckIn,
             lastCheckOut,
             totalHours,
             status,
           },
           update: {
-            // @ts-ignore — new fields; run `prisma migrate dev && prisma generate` to resolve
             firstCheckIn,
             lastCheckOut,
             totalHours,
