@@ -200,7 +200,7 @@ export class AttendanceFinalizationService {
             status,
           },
           update: {
-            firstCheckIn,
+              firstCheckIn,
             lastCheckOut,
             totalHours,
             status,

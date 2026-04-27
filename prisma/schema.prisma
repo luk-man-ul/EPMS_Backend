@@ -95,6 +95,11 @@ enum ChannelType {
   PROJECT
 }
 
+enum ExpenseType {
+  SALARY
+  MANUAL
+}
+
 //////////////////////////////////////////////////////
 // AUTH & RBAC
 //////////////////////////////////////////////////////
@@ -160,6 +165,11 @@ model User {
   activityFeed    ActivityFeed[]
   auditLogs       AuditLog[]
   uploadedFiles   FileAttachment[]
+
+  // Finance back-relations
+  expenses        Expense[] @relation("ExpenseEmployee")
+  createdRevenues Revenue[] @relation("RevenueCreator")
+  createdExpenses Expense[] @relation("ExpenseCreator")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -256,6 +266,10 @@ model Project {
   finance   ProjectFinance?
   channels  Channel[]
   chatRooms ChatRoom[]
+
+  // Finance back-relations
+  revenues Revenue[]
+  expenses Expense[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -490,6 +504,44 @@ model ProjectFinance {
   totalExpense Float  @default(0)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Revenue {
+  id           String   @id @default(uuid())
+  projectId    String
+  amount       Float
+  receivedDate DateTime
+  description  String?
+  createdById  String
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("RevenueCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([receivedDate])
+}
+
+model Expense {
+  id          String      @id @default(uuid())
+  type        ExpenseType
+  amount      Float
+  expenseDate DateTime
+  employeeId  String?
+  projectId   String?
+  description String?
+  createdById String
+
+  employee  User?    @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+  project   Project? @relation(fields: [projectId], references: [id])
+  createdBy User     @relation("ExpenseCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([employeeId])
+  @@index([expenseDate])
 }
 
 //////////////////////////////////////////////////////
