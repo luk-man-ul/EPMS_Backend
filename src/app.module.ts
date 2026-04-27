@@ -26,6 +26,7 @@ import { FilesModule } from './files/files.module';
 import { AdminModule } from './admin/admin.module';
 import { LoggerModule } from './common/logger/logger.module';
 import { CommentsModule } from './comments/comments.module';
+import { FinanceModule } from './finance/finance.module';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { HealthController } from './health/health.controller';
 
@@ -54,6 +55,7 @@ import { HealthController } from './health/health.controller';
     FilesModule,
     AdminModule,
     CommentsModule,
+    FinanceModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
