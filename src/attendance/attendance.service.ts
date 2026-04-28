@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AttendanceSessionService } from './attendance-session.service';
 import { AttendanceFinalizationService } from './attendance-finalization.service';
 import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString, toISTDate } from '../common/utils/ist-date.util';
+import { getWorkingDaysInRange } from '../common/utils/working-day.util';
 
 // IST thresholds — must match attendance-finalization.service.ts
 const LATE_HOUR = 11;
@@ -68,6 +69,113 @@ export class AttendanceService {
       ? new Date(`${targetDateStr}T12:00:00`)  // noon anchor avoids IST day shift
       : undefined;
     return this.finalizationService.finalizeDay(targetDate);
+  }
+
+  /**
+   * GET /attendance/calendar?userId=&month=YYYY-MM
+   *
+   * Returns one CalendarDay entry per calendar day in the requested month.
+   * dayType is computed dynamically — never stored in the database.
+   *
+   * dayType rules:
+   *   HOLIDAY  — date matches a Holiday record
+   *   WEEKEND  — Saturday or Sunday (IST)
+   *   WORKING  — all other days
+   */
+  async getCalendarView(
+    userId: string,
+    month: string,  // YYYY-MM
+  ): Promise<Array<{
+    date: string;
+    dayType: 'WORKING' | 'WEEKEND' | 'HOLIDAY';
+    holidayName?: string;
+    status?: string;
+    firstCheckIn?: string;
+    lastCheckOut?: string;
+    totalHours?: number;
+  }>> {
+    // ── Parse month boundaries ───────────────────────────────────────────────
+    const [year, mon] = month.split('-').map(Number);
+    // First day of month at UTC midnight (matches @db.Date convention)
+    const monthStart = new Date(Date.UTC(year, mon - 1, 1));
+    // First day of next month (exclusive upper bound)
+    const monthEnd   = new Date(Date.UTC(year, mon, 1));
+
+    // ── Fetch attendance rows and holidays in parallel ───────────────────────
+    const [attendanceRows, holidayRows] = await Promise.all([
+      this.prisma.attendance.findMany({
+        where: {
+          userId,
+          date: { gte: monthStart, lt: monthEnd },
+        },
+        select: {
+          date: true,
+          status: true,
+          firstCheckIn: true,
+          lastCheckOut: true,
+          totalHours: true,
+        },
+      }),
+      this.prisma.holiday.findMany({
+        where: { date: { gte: monthStart, lt: monthEnd } },
+        select: { date: true, name: true },
+      }),
+    ]);
+
+    // ── Build lookup maps ────────────────────────────────────────────────────
+    // Key: YYYY-MM-DD (IST) → attendance record
+    const attendanceMap = new Map(
+      attendanceRows.map((r) => [toISTDateString(r.date), r]),
+    );
+    // Key: YYYY-MM-DD (IST) → holiday name
+    const holidayMap = new Map(
+      holidayRows.map((h) => [toISTDateString(h.date), h.name]),
+    );
+
+    // ── IST day-of-week helper ───────────────────────────────────────────────
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const getISTDayOfWeek = (utcDate: Date): number => {
+      return new Date(utcDate.getTime() + IST_OFFSET_MS).getUTCDay();
+    };
+
+    // ── Build one entry per calendar day ─────────────────────────────────────
+    const result: Array<{
+      date: string;
+      dayType: 'WORKING' | 'WEEKEND' | 'HOLIDAY';
+      holidayName?: string;
+      status?: string;
+      firstCheckIn?: string;
+      lastCheckOut?: string;
+      totalHours?: number;
+    }> = [];
+
+    let current = new Date(monthStart);
+    while (current < monthEnd) {
+      const dateStr = toISTDateString(current);
+      const dow = getISTDayOfWeek(current);
+      const isWeekend = dow === 0 || dow === 6;
+      const holidayName = holidayMap.get(dateStr);
+
+      // dayType: HOLIDAY takes precedence over WEEKEND
+      const dayType: 'WORKING' | 'WEEKEND' | 'HOLIDAY' =
+        holidayName ? 'HOLIDAY' : isWeekend ? 'WEEKEND' : 'WORKING';
+
+      const att = attendanceMap.get(dateStr);
+
+      const entry: (typeof result)[number] = { date: dateStr, dayType };
+      if (holidayName) entry.holidayName = holidayName;
+      if (att) {
+        entry.status       = att.status;
+        entry.firstCheckIn = att.firstCheckIn?.toISOString() ?? undefined;
+        entry.lastCheckOut = att.lastCheckOut?.toISOString() ?? undefined;
+        entry.totalHours   = att.totalHours;
+      }
+
+      result.push(entry);
+      current = new Date(current.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    return result;
   }
 
   /**
@@ -502,16 +610,19 @@ export class AttendanceService {
     // ── 9. Range mode: count raw totals across all days ──────────────────────
     for (const row of allRows) applyStatus(row.status);
 
-    const totalDays = Math.round(
-      (endIST.getTime() - startIST.getTime()) / (24 * 60 * 60 * 1000),
-    );
+    // Fetch holidays within the requested range
+    const holidays = await this.prisma.holiday.findMany({
+      where: { date: { gte: attendanceDateStart, lt: attendanceDateEnd } },
+      select: { date: true },
+    });
+    const holidaySet = new Set(holidays.map((h) => toISTDateString(h.date)));
 
-    // Missing (userId, date) pairs → ABSENT
+    // Generate working days only (excludes weekends and holidays)
+    const rangeDates = getWorkingDaysInRange(startIST, endIST, holidaySet);
+    const totalDays = rangeDates.length;
+
+    // Missing (userId, date) pairs → ABSENT (only for working days)
     const coveredPairs = new Set(allRows.map((r) => `${r.userId}::${r.date}`));
-    const rangeDates: string[] = [];
-    for (let d = new Date(startIST); d < endIST; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
-      rangeDates.push(toISTDateString(d));
-    }
     for (const dateStr of rangeDates) {
       for (const uid of allEmployeeIds) {
         if (!coveredPairs.has(`${uid}::${dateStr}`)) {

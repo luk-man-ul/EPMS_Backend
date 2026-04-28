@@ -7,6 +7,13 @@ import {
   toISTDateString,
   toISTDate,
 } from '../common/utils/ist-date.util';
+import {
+  OFFICE_LATITUDE,
+  OFFICE_LONGITUDE,
+  ALLOWED_RADIUS_METERS,
+  calculateDistance,
+} from './attendance.constants';
+import { isWorkingDay } from '../common/utils/working-day.util';
 
 /**
  * AttendanceFinalizationService
@@ -30,35 +37,11 @@ export class AttendanceFinalizationService {
   private readonly HALF_DAY_CHECKIN_MINUTE = 30;
   private readonly HALF_DAY_HOURS = 4;
 
-  // Office geofence — must match AttendanceSessionService constants
-  private readonly OFFICE_LATITUDE = 11.982748317280704;
-  private readonly OFFICE_LONGITUDE = 75.36459629666871;
-  private readonly ALLOWED_RADIUS_METERS = 250;
-
-  /**
-   * Haversine distance between two GPS coordinates.
-   * Returns distance in meters.
-   */
-  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371e3;
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-
   /**
    * Returns true if the given coordinates are outside the office geofence.
    */
   private isOutsideOffice(lat: number, lng: number): boolean {
-    return (
-      this.calculateDistance(lat, lng, this.OFFICE_LATITUDE, this.OFFICE_LONGITUDE) >
-      this.ALLOWED_RADIUS_METERS
-    );
+    return calculateDistance(lat, lng, OFFICE_LATITUDE, OFFICE_LONGITUDE) > ALLOWED_RADIUS_METERS;
   }
 
   constructor(private prisma: PrismaService) {}
@@ -81,6 +64,18 @@ export class AttendanceFinalizationService {
     console.log(`[FINALIZE] DB date value (istDate): ${istDate.toISOString()}`);
 
     this.logger.log(`Starting attendance finalization for IST date: ${dateStr}`);
+
+    // ── Step 0: Determine day type (weekend / holiday) ───────────────────────
+    // isWorkingDay uses IST day-of-week; holiday lookup uses the @db.Date value.
+    const holiday = await this.prisma.holiday.findUnique({ where: { date: istDate } });
+    const isNonWorkingDay = !isWorkingDay(dayStart) || !!holiday;
+
+    if (isNonWorkingDay) {
+      this.logger.log(
+        `[FINALIZE] ${dateStr} is a non-working day (${holiday ? `holiday: ${holiday.name}` : 'weekend'}) — ` +
+        `ABSENT will NOT be written; employees with sessions will still be finalized`,
+      );
+    }
 
     // ── Step 1: Fetch all active employees (non-admin) ──────────────────────
     const employees = await this.prisma.user.findMany({
@@ -157,6 +152,16 @@ export class AttendanceFinalizationService {
       const sessions = sessionsByUser.get(employee.id) ?? [];
 
       console.log(`[FINALIZE] Processing user: ${employee.email} | sessions: ${sessions.length}`);
+
+      // ── Non-working day guard ────────────────────────────────────────────
+      // Weekend or holiday with no sessions → skip entirely (no ABSENT written).
+      // Weekend or holiday WITH sessions → fall through and finalize normally.
+      if (isNonWorkingDay && sessions.length === 0) {
+        this.logger.log(
+          `[FINALIZE] Skipping ${employee.email} on non-working day (no sessions)`,
+        );
+        continue;
+      }
 
       const isWfh = employee.workMode === 'WFH' || wfhUserIds.has(employee.id);
       const isOnLeave = leaveUserIds.has(employee.id);

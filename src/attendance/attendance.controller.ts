@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -89,6 +90,34 @@ export class AttendanceController {
       throw new BadRequestException('date must be in YYYY-MM-DD format');
     }
     return this.attendanceService.getSessionsByDate(userId, date);
+  }
+
+  @Permissions('attendance.view')
+  @Get('calendar')
+  @ApiOperation({ summary: 'Get calendar view for an employee — one entry per day with dayType and attendance status' })
+  @ApiQuery({ name: 'userId', required: true,  description: 'Employee user ID (UUID)' })
+  @ApiQuery({ name: 'month',  required: true,  description: 'Month in YYYY-MM format' })
+  @ApiResponse({ status: 200, description: 'Returns CalendarDay[] for every day in the requested month' })
+  getCalendar(
+    @Query('userId') userId: string,
+    @Query('month')  month: string,
+    @Req() req,
+  ) {
+    if (!userId) throw new BadRequestException('userId is required');
+    if (!month)  throw new BadRequestException('month is required');
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException('month must be in YYYY-MM format');
+    }
+
+    // Non-admin users may only view their own calendar
+    const requester = req.user;
+    const isAdmin = requester.role === 'ADMIN' ||
+      (requester.permissions && requester.permissions.includes('attendance.admin'));
+    if (!isAdmin && requester.id !== userId) {
+      throw new ForbiddenException('You can only view your own calendar');
+    }
+
+    return this.attendanceService.getCalendarView(userId, month);
   }
 
   @Permissions('attendance.view')

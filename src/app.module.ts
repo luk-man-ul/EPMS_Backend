@@ -27,6 +27,7 @@ import { AdminModule } from './admin/admin.module';
 import { LoggerModule } from './common/logger/logger.module';
 import { CommentsModule } from './comments/comments.module';
 import { FinanceModule } from './finance/finance.module';
+import { HolidayModule } from './holiday/holiday.module';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { HealthController } from './health/health.controller';
 
@@ -56,6 +57,7 @@ import { HealthController } from './health/health.controller';
     AdminModule,
     CommentsModule,
     FinanceModule,
+    HolidayModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

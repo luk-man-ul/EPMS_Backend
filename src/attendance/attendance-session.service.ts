@@ -12,16 +12,17 @@ import {
   toISTDateString,
   toISTDate,
 } from '../common/utils/ist-date.util';
+import {
+  OFFICE_LATITUDE,
+  OFFICE_LONGITUDE,
+  ALLOWED_RADIUS_METERS,
+  MAX_SESSION_HOURS,
+  calculateDistance,
+} from './attendance.constants';
 
 @Injectable()
 export class AttendanceSessionService {
   private readonly logger = new Logger(AttendanceSessionService.name);
-  
-  // Office coordinates
-  private readonly OFFICE_LATITUDE = 11.982748317280704;
-  private readonly OFFICE_LONGITUDE = 75.36459629666871;
-  private readonly ALLOWED_RADIUS_METERS = 250;
-  private readonly MAX_SESSION_HOURS = 12;
 
   constructor(private prisma: PrismaService) {
     // Run recovery on service initialization
@@ -84,30 +85,6 @@ export class AttendanceSessionService {
     }
   }
 
-  /**
-   * Calculate distance between two coordinates using Haversine formula
-   * @returns distance in meters
-   */
-  private calculateDistance(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number,
-  ): number {
-    const R = 6371e3; // Earth's radius in meters
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c; // Distance in meters
-  }
-
   async checkIn(userId: string, latitude?: number, longitude?: number) {
     this.logger.log(`Check-in attempt - User: ${userId}, Location: (${latitude}, ${longitude})`);
 
@@ -124,22 +101,22 @@ export class AttendanceSessionService {
       this.logger.log(`WFH check-in allowed for user ${userId} - skipping geofence validation`);
     } else {
       // Calculate distance from office
-      const distance = this.calculateDistance(
+      const distance = calculateDistance(
         latitude,
         longitude,
-        this.OFFICE_LATITUDE,
-        this.OFFICE_LONGITUDE,
+        OFFICE_LATITUDE,
+        OFFICE_LONGITUDE,
       );
 
-      this.logger.log(`Distance from office: ${distance.toFixed(2)} meters (allowed: ${this.ALLOWED_RADIUS_METERS}m)`);
+      this.logger.log(`Distance from office: ${distance.toFixed(2)} meters (allowed: ${ALLOWED_RADIUS_METERS}m)`);
 
       // Enforce geofencing
-      if (distance > this.ALLOWED_RADIUS_METERS) {
+      if (distance > ALLOWED_RADIUS_METERS) {
         this.logger.warn(
-          `Check-in rejected - User ${userId} is ${distance.toFixed(2)}m from office (limit: ${this.ALLOWED_RADIUS_METERS}m)`
+          `Check-in rejected - User ${userId} is ${distance.toFixed(2)}m from office (limit: ${ALLOWED_RADIUS_METERS}m)`
         );
         throw new BadRequestException(
-          `You are outside the allowed office area. You must be within ${this.ALLOWED_RADIUS_METERS} meters of the office to check in.`,
+          `You are outside the allowed office area. You must be within ${ALLOWED_RADIUS_METERS} meters of the office to check in.`,
         );
       }
     }
@@ -366,10 +343,10 @@ export class AttendanceSessionService {
    * Checks and closes sessions that have been open for more than MAX_SESSION_HOURS
    */
   async autoCheckoutLongSessions() {
-    this.logger.log(`Auto-checkout long sessions job started (max duration: ${this.MAX_SESSION_HOURS} hours)`);
+    this.logger.log(`Auto-checkout long sessions job started (max duration: ${MAX_SESSION_HOURS} hours)`);
 
     try {
-      const maxDuration = this.MAX_SESSION_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
+      const maxDuration = MAX_SESSION_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
       const cutoffTime = new Date(Date.now() - maxDuration);
 
       const longSessions = await this.prisma.attendanceSession.findMany({
@@ -388,7 +365,7 @@ export class AttendanceSessionService {
 
       if (longSessions.length > 0) {
         this.logger.warn(
-          `Found ${longSessions.length} sessions exceeding ${this.MAX_SESSION_HOURS} hours`
+          `Found ${longSessions.length} sessions exceeding ${MAX_SESSION_HOURS} hours`
         );
 
         for (const session of longSessions) {
@@ -404,7 +381,7 @@ export class AttendanceSessionService {
             `Session auto closed due to max duration exceeded - ` +
             `User: ${session.user.email}, Session ID: ${session.id}, ` +
             `CheckIn: ${session.checkIn.toISOString()}, ` +
-            `CheckOut set to: ${autoCheckoutTime.toISOString()} (${this.MAX_SESSION_HOURS}h limit)`
+            `CheckOut set to: ${autoCheckoutTime.toISOString()} (${MAX_SESSION_HOURS}h limit)`
           );
         }
 
