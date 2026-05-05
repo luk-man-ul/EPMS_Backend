@@ -55,3 +55,11 @@ export function countWorkingDays(
 ): number {
   return getWorkingDaysInRange(start, end, holidayDates).length;
 }
+
+/**
+ * Returns true if the given date is NOT a working day (weekend or holiday).
+ * Convenience inverse of isWorkingDay().
+ */
+export function isNonWorkingDay(date: Date, holidayDates?: Set<string>): boolean {
+  return !isWorkingDay(date, holidayDates);
+}

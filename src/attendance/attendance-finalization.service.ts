@@ -295,11 +295,19 @@ export class AttendanceFinalizationService {
         : null;
 
     // Total hours across all completed sessions
-    const totalHours = completedSessions.reduce((sum, s) => {
+    const completedHours = completedSessions.reduce((sum, s) => {
       const hours = (s.checkOut!.getTime() - s.checkIn.getTime()) / (1000 * 60 * 60);
       return sum + hours;
     }, 0);
 
+    // For open sessions (no checkout), add elapsed time up to now
+    const openSessions = sessions.filter((s) => s.checkOut === null);
+    const openHours = openSessions.reduce((sum, s) => {
+      const hours = (Date.now() - s.checkIn.getTime()) / (1000 * 60 * 60);
+      return sum + hours;
+    }, 0);
+
+    const totalHours = completedHours + openHours;
     const roundedHours = Math.round(totalHours * 100) / 100;
 
     // 1. WFH — eligible AND checked in from outside office
@@ -319,12 +327,15 @@ export class AttendanceFinalizationService {
     // 2. HALF_DAY — all sessions closed AND totalHours < 4
     //    Evaluated BEFORE LATE: an employee who arrives late AND works < 4h
     //    is HALF_DAY (the more severe outcome — they didn't complete a workday).
-    //    Requires lastCheckOut != null so a still-active session is never
-    //    prematurely classified as HALF_DAY mid-day.
-    if (lastCheckOut !== null && roundedHours < this.HALF_DAY_HOURS) {
+    //    HALF_DAY: applies when total hours (including open session elapsed time) < 4h
+    //    For finalized days (all sessions closed), lastCheckOut must be non-null.
+    //    For live days (open session), we use elapsed time — but only if the session
+    //    has been open long enough to be meaningful (> 30 min to avoid false positives at check-in).
+    const hasOpenSession = openSessions.length > 0;
+    const openSessionMature = hasOpenSession && openHours > 0.5; // > 30 min elapsed
+    if ((lastCheckOut !== null || openSessionMature) && roundedHours < this.HALF_DAY_HOURS) {
       return { status: 'HALF_DAY', firstCheckIn, lastCheckOut, totalHours: roundedHours };
     }
-
     // 3. LATE — checked in after 11:00 AM IST
     //    Only reached if the employee completed a full day (>= 4h or still active).
     if (firstCheckIn > lateThreshold) {

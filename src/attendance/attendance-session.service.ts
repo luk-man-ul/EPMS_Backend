@@ -169,20 +169,41 @@ export class AttendanceSessionService {
       );
     }
 
-    // Create new session with location and work mode
-    const newSession = await this.prisma.attendanceSession.create({
-      data: {
-        userId,
-        checkIn: new Date(),
-        latitude,
-        longitude,
-      },
-      include: {
-        user: {
-          select: { firstName: true, lastName: true, email: true },
-        },
-      },
+    // Final guard: re-check for open session to handle race conditions
+    const existingOpenSession = await this.prisma.attendanceSession.findFirst({
+      where: { userId, checkOut: null },
     });
+    if (existingOpenSession) {
+      const existingDateStr = toISTDateString(existingOpenSession.checkIn);
+      const todayDateStr = toISTDateString(new Date());
+      if (existingDateStr === todayDateStr) {
+        throw new BadRequestException('You must check out before checking in again.');
+      }
+    }
+
+    // Create new session with location and work mode
+    let newSession;
+    try {
+      newSession = await this.prisma.attendanceSession.create({
+        data: {
+          userId,
+          checkIn: new Date(),
+          latitude,
+          longitude,
+        },
+        include: {
+          user: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      });
+    } catch (createErr: any) {
+      // Handle race condition: another request created a session between our check and create
+      if (createErr?.code === 'P2002' || createErr?.message?.includes('Unique constraint')) {
+        throw new BadRequestException('A check-in session was already created. Please refresh and try again.');
+      }
+      throw createErr;
+    }
 
     this.logger.log(
       `Check-in successful - User: ${userId}, Session ID: ${newSession.id}, ` +

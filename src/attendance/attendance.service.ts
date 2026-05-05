@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AttendanceSessionService } from './attendance-session.service';
 import { AttendanceFinalizationService } from './attendance-finalization.service';
 import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDateString, toISTDate } from '../common/utils/ist-date.util';
-import { getWorkingDaysInRange } from '../common/utils/working-day.util';
+import { getWorkingDaysInRange, isWorkingDay } from '../common/utils/working-day.util';
 
 // IST thresholds — must match attendance-finalization.service.ts
 const LATE_HOUR = 11;
@@ -131,6 +131,77 @@ export class AttendanceService {
     const holidayMap = new Map(
       holidayRows.map((h) => [toISTDateString(h.date), h.name]),
     );
+
+    // ── Live-today injection ─────────────────────────────────────────────────
+    // If today falls within this month and has no finalized Attendance row yet,
+    // compute the live status from today's sessions and inject it into attendanceMap.
+    const todayStr = toISTDateString(new Date());
+    const [todayYear, todayMon] = todayStr.split('-').map(Number);
+    const todayInThisMonth = todayYear === year && todayMon === mon;
+
+    if (todayInThisMonth && !attendanceMap.has(todayStr)) {
+      const todayISTStart = getISTStartOfDay();
+      const todayISTDate = toISTDate(todayISTStart);
+
+      // Only inject if today is a working day (no point computing live status on weekends/holidays)
+      const todayHolidayForCalendar = holidayMap.has(todayStr); // already fetched
+      const todayIsNonWorkingForCalendar = !isWorkingDay(todayISTStart) || todayHolidayForCalendar;
+
+      if (!todayIsNonWorkingForCalendar) {
+        const [todaySessions, wfhReqs, permanentWfh, leaveReqs] = await Promise.all([
+          this.prisma.attendanceSession.findMany({
+            where: {
+              userId,
+              checkIn: { gte: todayISTStart, lt: getISTStartOfNextDay() },
+            },
+            select: { checkIn: true, checkOut: true, latitude: true, longitude: true },
+          }),
+          this.prisma.wfhRequest.findMany({
+            where: {
+              userId,
+              status: 'APPROVED',
+              fromDate: { lte: todayISTDate },
+              toDate: { gte: todayISTDate },
+            },
+            select: { userId: true },
+          }),
+          this.prisma.user.findMany({
+            where: { id: userId, workMode: 'WFH' },
+            select: { id: true },
+          }),
+          this.prisma.leaveRequest.findMany({
+            where: {
+              userId,
+              status: 'APPROVED',
+              startDate: { lte: todayISTDate },
+              endDate: { gte: todayISTDate },
+            },
+            select: { userId: true },
+          }),
+        ]);
+
+        if (todaySessions.length > 0) {
+          const isWfh = permanentWfh.length > 0 || wfhReqs.length > 0;
+          const isOnLeave = leaveReqs.length > 0;
+          const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayISTStart);
+          const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayISTStart);
+
+          const { status, firstCheckIn, lastCheckOut, totalHours } =
+            this.finalizationService.calculateDailyStatus(
+              todaySessions, lateThreshold, halfDayThreshold, isWfh, isOnLeave,
+            );
+
+          // Inject as a synthetic attendance record (not persisted)
+          attendanceMap.set(todayStr, {
+            date: new Date(todayStr + 'T00:00:00.000Z'),
+            status: status as any,
+            firstCheckIn: firstCheckIn ?? null,
+            lastCheckOut: lastCheckOut ?? null,
+            totalHours,
+          });
+        }
+      }
+    }
 
     // ── IST day-of-week helper ───────────────────────────────────────────────
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -565,8 +636,17 @@ export class AttendanceService {
       const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayIST);
       const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayIST);
 
+      // Determine if today is a non-working day
+      const todayISTDateForDayType = toISTDate(todayIST);
+      const todayHoliday = await this.prisma.holiday.findUnique({ where: { date: todayISTDateForDayType } });
+      const todayIsNonWorking = !isWorkingDay(todayIST) || !!todayHoliday;
+
       for (const uid of allEmployeeIds) {
         const sessions = sessionsByUser.get(uid) ?? [];
+
+        // On non-working days, skip employees with no sessions (no ABSENT injection)
+        if (todayIsNonWorking && sessions.length === 0) continue;
+
         const isWfh = permanentWfhIds.has(uid) || wfhRequestIds.has(uid);
         const isOnLeave = onLeaveIds.has(uid);
 
@@ -601,7 +681,21 @@ export class AttendanceService {
 
     // ── 8. Single-day: count directly ────────────────────────────────────────
     if (isSingleDay) {
+      // Check if the single day is a non-working day (weekend or holiday)
+      const singleDayIST = getISTStartOfDay(new Date(`${startDate}T12:00:00`));
+      const singleDayISTDate = toISTDate(singleDayIST);
+      const singleDayHoliday = await this.prisma.holiday.findUnique({ where: { date: singleDayISTDate } });
+      const singleDayIsNonWorking = !isWorkingDay(singleDayIST) || !!singleDayHoliday;
+
       for (const row of allRows) applyStatus(row.status);
+
+      if (singleDayIsNonWorking) {
+        // On non-working days: no absent, no leave — only count employees who actually worked
+        raw.absent = 0;
+        raw.onLeave = 0;
+        return { totalEmployees, ...raw };
+      }
+
       // Absent = totalEmployees - present - onLeave (no double counting)
       raw.absent = Math.max(0, totalEmployees - raw.present - raw.onLeave);
       return { totalEmployees, ...raw };
