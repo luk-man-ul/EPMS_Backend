@@ -8,10 +8,14 @@ import { PrismaService } from 'src/prisma/prisma.service'
 import { CreateTaskDto } from './dto/create-task.dto'
 import { UpdateTaskDto } from './dto/update-task.dto'
 import { TaskStatus, TaskType } from '@prisma/client'
+import { NotificationsService } from '../notifications/notifications.service'
 
 @Injectable()
 export class TasksService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   ////////////////////////////////////////////////////////////
   // CREATE TASK
@@ -72,7 +76,7 @@ async create(dto: CreateTaskDto, user: any) {
   );
 }
 private async createTask(dto: CreateTaskDto, userId: string) {
-  return this.prisma.task.create({
+  const task = await this.prisma.task.create({
     data: {
       projectId: dto.projectId,
       title: dto.title,
@@ -82,7 +86,22 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
       createdById: userId,
     },
+    include: {
+      project: { select: { id: true, name: true } },
+    },
   });
+
+  // Notify the assignee if one was set
+  if (dto.assignedToId) {
+    await this.notificationsService.notifyTaskAssigned(
+      dto.assignedToId,
+      task.title,
+      task.project.name,
+      task.id,
+    );
+  }
+
+  return task;
 }
 
   ////////////////////////////////////////////////////////////
@@ -145,6 +164,13 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
+    // Notify all admins that a self-work proposal needs approval
+    await this.notificationsService.notifySelfWorkRequested(
+      user.id,
+      task.title,
+      task.id,
+    );
+
     return task;
   }
 
@@ -197,14 +223,12 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
-    // Create notification for task creator
-    await this.prisma.notification.create({
-      data: {
-        userId: task.assignedToId!,
-        type: 'TASK_APPROVED',
-        message: `Your self-work proposal "${task.title}" for project "${task.project.name}" has been approved by ${user.firstName} ${user.lastName}`,
-      },
-    });
+    // Notify the employee their proposal was approved
+    await this.notificationsService.notifyTaskApproved(
+      task.assignedToId!,
+      task.title,
+      taskId,
+    );
 
     // Create audit log entry
     await this.prisma.auditLog.create({
@@ -297,14 +321,13 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
-    // Create notification for task creator with reason
-    await this.prisma.notification.create({
-      data: {
-        userId: task.assignedToId!,
-        type: 'TASK_REJECTED',
-        message: `Your self-work proposal "${task.title}" was rejected by ${user.firstName} ${user.lastName}. Reason: ${reason.trim()}`,
-      },
-    });
+    // Notify the employee their proposal was rejected with reason
+    await this.notificationsService.notifyTaskRejected(
+      task.assignedToId!,
+      task.title,
+      taskId,
+      reason.trim(),
+    );
 
     // Create audit log entry with reason
     await this.prisma.auditLog.create({

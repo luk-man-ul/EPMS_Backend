@@ -7,10 +7,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { toISTDate } from '../common/utils/ist-date.util';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class LeaveService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async create(dto: any, userId: string) {
     // Normalize to UTC midnight of the IST calendar date for correct @db.Date storage,
@@ -22,7 +26,7 @@ export class LeaveService {
       throw new BadRequestException('Start date cannot be after end date');
     }
 
-    return this.prisma.leaveRequest.create({
+    const leave = await this.prisma.leaveRequest.create({
       data: {
         userId,
         type: dto.type,
@@ -37,6 +41,17 @@ export class LeaveService {
         },
       },
     });
+
+    // Notify all admins that a leave request needs approval
+    await this.notificationsService.notifyLeaveRequested(
+      userId,
+      dto.type,
+      startDate.toISOString().split('T')[0],
+      endDate.toISOString().split('T')[0],
+      leave.id,
+    );
+
+    return leave;
   }
 
   async findMyLeaveRequests(userId: string) {
@@ -108,7 +123,7 @@ export class LeaveService {
       throw new ForbiddenException('You do not have authority to approve this leave request');
     }
 
-    return this.prisma.leaveRequest.update({
+    const updated = await this.prisma.leaveRequest.update({
       where: { id: leaveId },
       data: {
         status: 'APPROVED',
@@ -124,6 +139,15 @@ export class LeaveService {
         },
       },
     });
+
+    // Notify the employee their leave was approved
+    await this.notificationsService.notifyLeaveApproved(
+      leave.userId,
+      leave.type,
+      leaveId,
+    );
+
+    return updated;
   }
 
   async rejectLeave(leaveId: string, reason: string | undefined, user: any) {
@@ -157,7 +181,7 @@ export class LeaveService {
       throw new ForbiddenException('You do not have authority to reject this leave request');
     }
 
-    return this.prisma.leaveRequest.update({
+    const updated = await this.prisma.leaveRequest.update({
       where: { id: leaveId },
       data: {
         status: 'REJECTED',
@@ -173,6 +197,15 @@ export class LeaveService {
         },
       },
     });
+
+    // Notify the employee their leave was rejected
+    await this.notificationsService.notifyLeaveRejected(
+      leave.userId,
+      leave.type,
+      leaveId,
+    );
+
+    return updated;
   }
 
   async findAll(filters: any, user: any) {

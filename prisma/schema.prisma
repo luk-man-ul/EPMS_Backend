@@ -636,21 +636,24 @@ model Message {
 //////////////////////////////////////////////////////
 
 model Notification {
-  id       String  @id @default(uuid())
-  userId   String
-  type     String
-  title    String  @default("Notification")
-  message  String
-  isRead   Boolean @default(false)
-  metadata Json?
+  id         String    @id @default(uuid())
+  userId     String
+  type       String
+  title      String
+  message    String
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  entityType String?
+  entityId   String?
+  metadata   Json?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
-  @@index([userId])
-  @@index([isRead])
+  @@index([userId, isRead])
   @@index([createdAt])
+  @@index([entityType, entityId])
 }
 
 model ActivityFeed {

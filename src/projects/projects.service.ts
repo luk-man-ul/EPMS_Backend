@@ -10,6 +10,7 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectWorkflowService } from './project-workflow.service';
 import { ChatService } from '../chat/chat.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ProjectsService {
@@ -18,6 +19,7 @@ export class ProjectsService {
   constructor(
     private prisma: PrismaService,
     private chatService: ChatService,
+    private notificationsService: NotificationsService,
   ) {
     this.workflowService = new ProjectWorkflowService();
   }
@@ -89,6 +91,18 @@ export class ProjectsService {
 
     // Create team chat room for the new project
     await this.chatService.ensureTeamRoom(project.id);
+
+    // Notify all assigned members (excluding the creator)
+    const membersToNotify = uniqueMembers.filter((id) => id !== user.id);
+    await Promise.all(
+      membersToNotify.map((memberId) =>
+        this.notificationsService.notifyProjectAssigned(
+          memberId,
+          name,
+          project.id,
+        ),
+      ),
+    );
 
     return {
       message: 'Project created successfully',

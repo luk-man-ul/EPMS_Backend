@@ -1,0 +1,26 @@
+export enum NotificationType {
+  // Self-work
+  SELF_WORK_REQUESTED  = 'SELF_WORK_REQUESTED',
+  TASK_APPROVED        = 'TASK_APPROVED',
+  TASK_REJECTED        = 'TASK_REJECTED',
+
+  // WFH
+  WFH_REQUESTED        = 'WFH_REQUESTED',
+  WFH_APPROVED         = 'WFH_APPROVED',
+  WFH_REJECTED         = 'WFH_REJECTED',
+
+  // Leave
+  LEAVE_REQUESTED      = 'LEAVE_REQUESTED',
+  LEAVE_APPROVED       = 'LEAVE_APPROVED',
+  LEAVE_REJECTED       = 'LEAVE_REJECTED',
+
+  // Tasks
+  TASK_ASSIGNED        = 'TASK_ASSIGNED',
+
+  // Projects
+  PROJECT_ASSIGNED     = 'PROJECT_ASSIGNED',
+
+  // Tickets
+  TICKET_RAISED        = 'TICKET_RAISED',
+  TICKET_ASSIGNED      = 'TICKET_ASSIGNED',
+}

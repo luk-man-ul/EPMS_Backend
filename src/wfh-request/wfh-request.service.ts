@@ -7,10 +7,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWfhRequestDto } from './dto/create-wfh-request.dto';
 import { toISTDate } from '../common/utils/ist-date.util';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class WfhRequestService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async createRequest(userId: string, dto: CreateWfhRequestDto) {
     // Normalize to UTC midnight of the IST calendar date for correct @db.Date storage
@@ -37,7 +41,7 @@ export class WfhRequestService {
       );
     }
 
-    return this.prisma.wfhRequest.create({
+    const request = await this.prisma.wfhRequest.create({
       data: {
         userId,
         fromDate,
@@ -51,6 +55,16 @@ export class WfhRequestService {
         },
       },
     });
+
+    // Notify all admins that a WFH request needs approval
+    await this.notificationsService.notifyWfhRequested(
+      userId,
+      fromDate.toISOString().split('T')[0],
+      toDate.toISOString().split('T')[0],
+      request.id,
+    );
+
+    return request;
   }
 
   async getMyRequests(userId: string) {
@@ -139,6 +153,26 @@ export class WfhRequestService {
         },
       },
     });
+
+    // Notify the employee of the decision
+    const fromStr = request.fromDate.toISOString().split('T')[0];
+    const toStr   = request.toDate.toISOString().split('T')[0];
+
+    if (status === 'APPROVED') {
+      await this.notificationsService.notifyWfhApproved(
+        request.userId,
+        fromStr,
+        toStr,
+        requestId,
+      );
+    } else {
+      await this.notificationsService.notifyWfhRejected(
+        request.userId,
+        fromStr,
+        toStr,
+        requestId,
+      );
+    }
 
     return updatedRequest;
   }

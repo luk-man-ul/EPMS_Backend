@@ -13,6 +13,7 @@ import { TicketFilterDto } from './dto/ticket-filter.dto';
 import { TicketStatus } from '@prisma/client';
 import { TicketWorkflowService } from './ticket-workflow.service';
 import { CommentsService } from '../comments/comments.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class TicketsService {
@@ -20,6 +21,7 @@ export class TicketsService {
     private prisma: PrismaService,
     private workflow: TicketWorkflowService,
     private commentsService: CommentsService,
+    private notificationsService: NotificationsService,
   ) {}
 
   ////////////////////////////////////////////////////////////////
@@ -92,6 +94,24 @@ export class TicketsService {
       project: true,
       task: true,
     },
+  }).then(async (ticket) => {
+    // Notify all admins a new ticket was raised
+    await this.notificationsService.notifyTicketRaised(
+      ticket.title,
+      ticket.project.name,
+      ticket.id,
+    );
+
+    // If ticket was created with an assignee, notify them too
+    if (dto.assignedToId) {
+      await this.notificationsService.notifyTicketAssigned(
+        dto.assignedToId,
+        ticket.title,
+        ticket.id,
+      );
+    }
+
+    return ticket;
   });
 }
   ////////////////////////////////////////////////////////////////
@@ -391,6 +411,14 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
   return this.prisma.ticket.update({
     where: { id },
     data: { assignedToId: dto.assignedToId },
+  }).then(async (updated) => {
+    // Notify the newly assigned user
+    await this.notificationsService.notifyTicketAssigned(
+      dto.assignedToId,
+      ticket.title,
+      id,
+    );
+    return updated;
   });
 }
 
@@ -434,6 +462,14 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
         assignee: true,
         project: true,
       },
+    }).then(async (updated) => {
+      // Notify the user they self-assigned this ticket
+      await this.notificationsService.notifyTicketAssigned(
+        user.id,
+        ticket.title,
+        id,
+      );
+      return updated;
     });
   }
   ////////////////////////////////////////////////////////////////

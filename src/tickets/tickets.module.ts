@@ -4,9 +4,10 @@ import { TicketsController } from './tickets.controller';
 import { TicketWorkflowService } from './ticket-workflow.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommentsModule } from '../comments/comments.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [CommentsModule],
+  imports: [CommentsModule, NotificationsModule],
   controllers: [TicketsController],
   providers: [TicketsService, TicketWorkflowService, PrismaService],
 })
