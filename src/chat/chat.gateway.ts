@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
 
@@ -26,19 +27,49 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private userSockets: Map<string, string> = new Map(); // userId -> socketId
   private userRoles: Map<string, string> = new Map(); // userId -> role
 
-  constructor(private chatService: ChatService) {}
+  constructor(
+    private chatService: ChatService,
+    private jwtService: JwtService,
+  ) {}
 
   handleConnection(client: Socket) {
     try {
-      const userId = client.handshake.query.userId as string;
-      const userRole = client.handshake.query.userRole as string;
-      
+      // ── Primary: JWT token in auth (new, secure) ──────────────────────
+      // ── Fallback: userId in query (legacy, kept for backward compat) ──
+      let userId: string | undefined;
+      let userRole: string | undefined;
+
+      const token = client.handshake.auth?.token;
+
+      if (token) {
+        // Verify JWT and extract userId from payload.sub
+        try {
+          const payload = this.jwtService.verify(token);
+          userId = payload.sub;
+          userRole = payload.role;
+        } catch (jwtErr) {
+          this.logger.warn(`JWT verification failed for socket ${client.id}: ${jwtErr}`);
+          client.emit('error', { message: 'Authentication failed: invalid token' });
+          client.disconnect();
+          return;
+        }
+      } else {
+        // Legacy fallback: read userId from query string
+        userId = client.handshake.query.userId as string;
+        userRole = client.handshake.query.userRole as string;
+      }
+
       if (!userId) {
         this.logger.warn(`Connection rejected: No userId provided - Socket ${client.id}`);
         client.emit('error', { message: 'Authentication required: userId not provided' });
         client.disconnect();
         return;
       }
+
+      // Store userId in socket.data so event handlers can read it without
+      // relying on the query string
+      client.data.userId = userId;
+      client.data.userRole = userRole;
 
       this.userSockets.set(userId, client.id);
       if (userRole) {
