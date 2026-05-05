@@ -93,12 +93,16 @@ private async createTask(dto: CreateTaskDto, userId: string) {
 
   // Notify the assignee if one was set
   if (dto.assignedToId) {
-    await this.notificationsService.notifyTaskAssigned(
-      dto.assignedToId,
-      task.title,
-      task.project.name,
-      task.id,
-    );
+    try {
+      await this.notificationsService.notifyTaskAssigned(
+        dto.assignedToId,
+        task.title,
+        task.project.name,
+        task.id,
+      );
+    } catch (err) {
+      console.error('[TasksService] Notification failed on task assign:', err);
+    }
   }
 
   return task;
@@ -164,12 +168,16 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
-    // Notify all admins that a self-work proposal needs approval
-    await this.notificationsService.notifySelfWorkRequested(
-      user.id,
-      task.title,
-      task.id,
-    );
+    // Fire-and-forget: notification failure must not break self-work creation
+    try {
+      await this.notificationsService.notifySelfWorkRequested(
+        user.id,
+        task.title,
+        task.id,
+      );
+    } catch (err) {
+      console.error('[TasksService] Notification failed on self-work create:', err);
+    }
 
     return task;
   }
@@ -223,12 +231,16 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
-    // Notify the employee their proposal was approved
-    await this.notificationsService.notifyTaskApproved(
-      task.assignedToId!,
-      task.title,
-      taskId,
-    );
+    // Fire-and-forget: notification failure must not break the approval response
+    try {
+      await this.notificationsService.notifyTaskApproved(
+        task.assignedToId!,
+        task.title,
+        taskId,
+      );
+    } catch (err) {
+      console.error('[TasksService] Notification failed on self-work approve:', err);
+    }
 
     // Create audit log entry
     await this.prisma.auditLog.create({
@@ -321,13 +333,17 @@ private async createTask(dto: CreateTaskDto, userId: string) {
       },
     });
 
-    // Notify the employee their proposal was rejected with reason
-    await this.notificationsService.notifyTaskRejected(
-      task.assignedToId!,
-      task.title,
-      taskId,
-      reason.trim(),
-    );
+    // Fire-and-forget: notification failure must not break the rejection response
+    try {
+      await this.notificationsService.notifyTaskRejected(
+        task.assignedToId!,
+        task.title,
+        taskId,
+        reason.trim(),
+      );
+    } catch (err) {
+      console.error('[TasksService] Notification failed on self-work reject:', err);
+    }
 
     // Create audit log entry with reason
     await this.prisma.auditLog.create({

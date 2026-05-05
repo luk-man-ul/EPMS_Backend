@@ -42,14 +42,18 @@ export class LeaveService {
       },
     });
 
-    // Notify all admins that a leave request needs approval
-    await this.notificationsService.notifyLeaveRequested(
-      userId,
-      dto.type,
-      startDate.toISOString().split('T')[0],
-      endDate.toISOString().split('T')[0],
-      leave.id,
-    );
+    // Fire-and-forget: notification failure must not break the leave creation
+    try {
+      await this.notificationsService.notifyLeaveRequested(
+        userId,
+        dto.type,
+        startDate.toISOString().split('T')[0],
+        endDate.toISOString().split('T')[0],
+        leave.id,
+      );
+    } catch (err) {
+      console.error('[LeaveService] Notification failed on leave create:', err);
+    }
 
     return leave;
   }
@@ -140,12 +144,16 @@ export class LeaveService {
       },
     });
 
-    // Notify the employee their leave was approved
-    await this.notificationsService.notifyLeaveApproved(
-      leave.userId,
-      leave.type,
-      leaveId,
-    );
+    // Fire-and-forget: notification failure must not break the leave approval
+    try {
+      await this.notificationsService.notifyLeaveApproved(
+        leave.userId,
+        leave.type,
+        leaveId,
+      );
+    } catch (err) {
+      console.error('[LeaveService] Notification failed on leave approve:', err);
+    }
 
     return updated;
   }
@@ -198,12 +206,16 @@ export class LeaveService {
       },
     });
 
-    // Notify the employee their leave was rejected
-    await this.notificationsService.notifyLeaveRejected(
-      leave.userId,
-      leave.type,
-      leaveId,
-    );
+    // Fire-and-forget: notification failure must not break the leave rejection
+    try {
+      await this.notificationsService.notifyLeaveRejected(
+        leave.userId,
+        leave.type,
+        leaveId,
+      );
+    } catch (err) {
+      console.error('[LeaveService] Notification failed on leave reject:', err);
+    }
 
     return updated;
   }

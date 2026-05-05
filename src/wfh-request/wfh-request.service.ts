@@ -56,13 +56,17 @@ export class WfhRequestService {
       },
     });
 
-    // Notify all admins that a WFH request needs approval
-    await this.notificationsService.notifyWfhRequested(
-      userId,
-      fromDate.toISOString().split('T')[0],
-      toDate.toISOString().split('T')[0],
-      request.id,
-    );
+    // Fire-and-forget: notification failure must not break the WFH creation
+    try {
+      await this.notificationsService.notifyWfhRequested(
+        userId,
+        fromDate.toISOString().split('T')[0],
+        toDate.toISOString().split('T')[0],
+        request.id,
+      );
+    } catch (err) {
+      console.error('[WfhRequestService] Notification failed on WFH create:', err);
+    }
 
     return request;
   }
@@ -154,24 +158,28 @@ export class WfhRequestService {
       },
     });
 
-    // Notify the employee of the decision
-    const fromStr = request.fromDate.toISOString().split('T')[0];
-    const toStr   = request.toDate.toISOString().split('T')[0];
+    // Fire-and-forget: notification failure must not break the WFH status update
+    try {
+      const fromStr = request.fromDate.toISOString().split('T')[0];
+      const toStr   = request.toDate.toISOString().split('T')[0];
 
-    if (status === 'APPROVED') {
-      await this.notificationsService.notifyWfhApproved(
-        request.userId,
-        fromStr,
-        toStr,
-        requestId,
-      );
-    } else {
-      await this.notificationsService.notifyWfhRejected(
-        request.userId,
-        fromStr,
-        toStr,
-        requestId,
-      );
+      if (status === 'APPROVED') {
+        await this.notificationsService.notifyWfhApproved(
+          request.userId,
+          fromStr,
+          toStr,
+          requestId,
+        );
+      } else {
+        await this.notificationsService.notifyWfhRejected(
+          request.userId,
+          fromStr,
+          toStr,
+          requestId,
+        );
+      }
+    } catch (err) {
+      console.error('[WfhRequestService] Notification failed on WFH status update:', err);
     }
 
     return updatedRequest;

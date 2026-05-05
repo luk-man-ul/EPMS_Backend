@@ -92,17 +92,21 @@ export class ProjectsService {
     // Create team chat room for the new project
     await this.chatService.ensureTeamRoom(project.id);
 
-    // Notify all assigned members (excluding the creator)
-    const membersToNotify = uniqueMembers.filter((id) => id !== user.id);
-    await Promise.all(
-      membersToNotify.map((memberId) =>
-        this.notificationsService.notifyProjectAssigned(
-          memberId,
-          name,
-          project.id,
+    // Fire-and-forget: notification failure must not break project creation
+    try {
+      const membersToNotify = uniqueMembers.filter((id) => id !== user.id);
+      await Promise.all(
+        membersToNotify.map((memberId) =>
+          this.notificationsService.notifyProjectAssigned(
+            memberId,
+            name,
+            project.id,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (err) {
+      console.error('[ProjectsService] Notification failed on project create:', err);
+    }
 
     return {
       message: 'Project created successfully',

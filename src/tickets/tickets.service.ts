@@ -77,7 +77,7 @@ export class TicketsService {
     }
   }
 
-  return this.prisma.ticket.create({
+  const ticket = await this.prisma.ticket.create({
     data: {
       title: dto.title,
       description: dto.description,
@@ -94,15 +94,16 @@ export class TicketsService {
       project: true,
       task: true,
     },
-  }).then(async (ticket) => {
-    // Notify all admins a new ticket was raised
+  });
+
+  // Notifications are fire-and-forget: a failure must NEVER break the ticket API response
+  try {
     await this.notificationsService.notifyTicketRaised(
       ticket.title,
       ticket.project.name,
       ticket.id,
     );
 
-    // If ticket was created with an assignee, notify them too
     if (dto.assignedToId) {
       await this.notificationsService.notifyTicketAssigned(
         dto.assignedToId,
@@ -110,9 +111,12 @@ export class TicketsService {
         ticket.id,
       );
     }
+  } catch (err) {
+    // Log but do not rethrow — ticket was already created successfully
+    console.error('[TicketsService] Notification failed on ticket create:', err);
+  }
 
-    return ticket;
-  });
+  return ticket;
 }
   ////////////////////////////////////////////////////////////////
   // FIND ALL (PROJECT-BASED VISIBILITY)
@@ -408,18 +412,23 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
     throw new ForbiddenException('User not part of project');
   }
 
-  return this.prisma.ticket.update({
+  const updated = await this.prisma.ticket.update({
     where: { id },
     data: { assignedToId: dto.assignedToId },
-  }).then(async (updated) => {
-    // Notify the newly assigned user
+  });
+
+  // Fire-and-forget: notification failure must not break the assign response
+  try {
     await this.notificationsService.notifyTicketAssigned(
       dto.assignedToId,
       ticket.title,
       id,
     );
-    return updated;
-  });
+  } catch (err) {
+    console.error('[TicketsService] Notification failed on ticket assign:', err);
+  }
+
+  return updated;
 }
 
   ////////////////////////////////////////////////////////////////
@@ -454,7 +463,7 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
     }
 
     // 3. Assign ticket to user
-    return this.prisma.ticket.update({
+    const updated = await this.prisma.ticket.update({
       where: { id },
       data: { assignedToId: user.id },
       include: {
@@ -462,15 +471,20 @@ async assign(user: any, id: string, dto: AssignTicketDto) {
         assignee: true,
         project: true,
       },
-    }).then(async (updated) => {
-      // Notify the user they self-assigned this ticket
+    });
+
+    // Fire-and-forget: notification failure must not break the self-assign response
+    try {
       await this.notificationsService.notifyTicketAssigned(
         user.id,
         ticket.title,
         id,
       );
-      return updated;
-    });
+    } catch (err) {
+      console.error('[TicketsService] Notification failed on ticket self-assign:', err);
+    }
+
+    return updated;
   }
   ////////////////////////////////////////////////////////////////
   // UPDATE PRIORITY
