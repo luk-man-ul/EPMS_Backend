@@ -9,7 +9,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ExpenseType } from '@prisma/client';
+import { ExpenseType, PaymentMethod } from '@prisma/client';
 
 export class CreateExpenseDto {
   @ApiProperty({ enum: ExpenseType, example: 'MANUAL' })
@@ -40,4 +40,31 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  // ── New optional fields ──────────────────────────────────────────────────
+
+  @ApiPropertyOptional({
+    enum: PaymentMethod,
+    example: 'CASH',
+    description: 'Payment method used for this expense',
+  })
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
+
+  @ApiPropertyOptional({
+    example: 'cuid-of-bank-account',
+    description: 'Bank account used to pay this expense',
+  })
+  @IsOptional()
+  @IsString()
+  bankAccountId?: string;
+
+  @ApiPropertyOptional({
+    example: 'cuid-of-expense-category',
+    description: 'Expense category (Travel, Food, Salary, Miscellaneous, etc.)',
+  })
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 }

@@ -100,6 +100,29 @@ enum ExpenseType {
   MANUAL
 }
 
+enum PaymentMethod {
+  CASH
+  ONLINE
+}
+
+enum LedgerEntryType {
+  CREDIT
+  DEBIT
+}
+
+enum LedgerReferenceType {
+  REVENUE
+  EXPENSE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
 //////////////////////////////////////////////////////
 // AUTH & RBAC
 //////////////////////////////////////////////////////
@@ -170,6 +193,8 @@ model User {
   expenses        Expense[] @relation("ExpenseEmployee")
   createdRevenues Revenue[] @relation("RevenueCreator")
   createdExpenses Expense[] @relation("ExpenseCreator")
+  createdLedgerEntries LedgerEntry[] @relation("LedgerEntryCreator")
+  createdInvoices      Invoice[]     @relation("InvoiceCreator")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -270,6 +295,7 @@ model Project {
   // Finance back-relations
   revenues Revenue[]
   expenses Expense[]
+  invoices Invoice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -514,13 +540,22 @@ model Revenue {
   description  String?
   createdById  String
 
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User    @relation("RevenueCreator", fields: [createdById], references: [id])
+  // Extended fields (nullable — safe for existing records)
+  paymentMethod PaymentMethod?
+  bankAccountId String?
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation("RevenueCreator", fields: [createdById], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  // Invoice back-relation (one-to-one, optional)
+  invoice Invoice?
 
   createdAt DateTime @default(now())
 
   @@index([projectId])
   @@index([receivedDate])
+  @@index([bankAccountId])
 }
 
 model Expense {
@@ -533,15 +568,118 @@ model Expense {
   description String?
   createdById String
 
-  employee  User?    @relation("ExpenseEmployee", fields: [employeeId], references: [id])
-  project   Project? @relation(fields: [projectId], references: [id])
-  createdBy User     @relation("ExpenseCreator", fields: [createdById], references: [id])
+  // Extended fields (nullable — safe for existing records)
+  paymentMethod PaymentMethod?
+  bankAccountId String?
+  categoryId    String?
+
+  employee    User?            @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+  project     Project?         @relation(fields: [projectId], references: [id])
+  createdBy   User             @relation("ExpenseCreator", fields: [createdById], references: [id])
+  bankAccount BankAccount?     @relation(fields: [bankAccountId], references: [id])
+  category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
 
   createdAt DateTime @default(now())
 
   @@index([projectId])
   @@index([employeeId])
   @@index([expenseDate])
+  @@index([bankAccountId])
+  @@index([categoryId])
+}
+
+//////////////////////////////////////////////////////
+// FINANCE — EXTENDED MODELS
+//////////////////////////////////////////////////////
+
+model BankAccount {
+  id            String  @id @default(cuid())
+  name          String
+  accountNumber String  @unique
+  bankName      String
+  ifscCode      String?
+  isActive      Boolean @default(true)
+
+  revenues  Revenue[]
+  expenses  Expense[]
+
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
+}
+
+model ExpenseCategory {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  expenses Expense[]
+
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
+}
+
+model LedgerEntry {
+  id            String              @id @default(cuid())
+  type          LedgerEntryType
+  referenceType LedgerReferenceType
+  amount        Float
+  date          DateTime
+  description   String?
+  referenceId   String
+  createdById   String
+
+  createdBy User @relation("LedgerEntryCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@index([referenceId])
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  invoiceNo      String        @unique
+  projectId      String
+  clientName     String
+  clientAddress  String?
+  clientGSTIN    String?
+  issueDate      DateTime
+  dueDate        DateTime
+  status         InvoiceStatus @default(DRAFT)
+  totalAmount    Float
+  notes          String?
+  pdfPath        String?
+  revenueId      String?       @unique
+  createdById    String
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revenue   Revenue? @relation(fields: [revenueId], references: [id])
+  createdBy User     @relation("InvoiceCreator", fields: [createdById], references: [id])
+
+  items InvoiceItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model InvoiceItem {
+  id          String @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Float
+  unitPrice   Float
+  total       Float
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
 }
 
 //////////////////////////////////////////////////////

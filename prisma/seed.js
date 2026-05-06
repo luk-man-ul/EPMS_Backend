@@ -1,15 +1,46 @@
 require('dotenv/config');
 const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 
-const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL,
-});
-
-const prisma = new PrismaClient({ adapter });
-
 async function main() {
+  // ── Connection warm-up ──────────────────────────────────────────────────
+  // Render free-tier databases sleep after inactivity. The pg.Pool must
+  // establish at least one live connection before PrismaPg can start
+  // transactions. We test the pool directly (bypassing Prisma) first.
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: 15000,
+    idleTimeoutMillis: 30000,
+    max: 3,
+    ssl: { rejectUnauthorized: false },
+  });
+
+  console.log('🔌 Connecting to database...');
+  let poolClient;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      poolClient = await pool.connect();
+      await poolClient.query('SELECT 1');
+      poolClient.release();
+      console.log('✅ Database connection established.');
+      break;
+    } catch (err) {
+      if (poolClient) { poolClient.release(true); poolClient = null; }
+      if (attempt < 5) {
+        console.log(`⚠️  Connection attempt ${attempt}/5 failed (${err.message}), retrying in 5s...`);
+        await new Promise((r) => setTimeout(r, 5000));
+      } else {
+        await pool.end();
+        throw new Error(`Could not connect to database after 5 attempts: ${err.message}`);
+      }
+    }
+  }
+
+  // Pool is warm — hand it to Prisma
+  const adapter = new PrismaPg(pool);
+  const prisma = new PrismaClient({ adapter });
   ////////////////////////////////////////////////////////////
   // 1️⃣ CREATE ROLES
   ////////////////////////////////////////////////////////////
@@ -241,10 +272,75 @@ async function main() {
   });
 
   console.log('✅ RBAC Seeding completed successfully.');
+
+  ////////////////////////////////////////////////////////////
+  // 6️⃣ SEED EXPENSE CATEGORIES
+  ////////////////////////////////////////////////////////////
+
+  const expenseCategories = [
+    { name: 'Travel' },
+    { name: 'Food' },
+    { name: 'Salary' },
+    { name: 'Miscellaneous' },
+  ];
+
+  for (const cat of expenseCategories) {
+    await prisma.expenseCategory.upsert({
+      where: { name: cat.name },
+      update: {},
+      create: {
+        name: cat.name,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log('✅ Expense categories seeded.');
+
+  ////////////////////////////////////////////////////////////
+  // 7️⃣ SEED BANK ACCOUNTS
+  ////////////////////////////////////////////////////////////
+
+  const bankAccounts = [
+    {
+      name: 'HDFC Current Account',
+      accountNumber: 'HDFC-001-CURRENT',
+      bankName: 'HDFC Bank',
+      ifscCode: 'HDFC0000001',
+    },
+    {
+      name: 'SBI Savings Account',
+      accountNumber: 'SBI-002-SAVINGS',
+      bankName: 'State Bank of India',
+      ifscCode: 'SBIN0000001',
+    },
+    {
+      name: 'Federal Bank Business Account',
+      accountNumber: 'FED-003-BUSINESS',
+      bankName: 'Federal Bank',
+      ifscCode: 'FDRL0000001',
+    },
+  ];
+
+  for (const account of bankAccounts) {
+    await prisma.bankAccount.upsert({
+      where: { accountNumber: account.accountNumber },
+      update: {},
+      create: {
+        name: account.name,
+        accountNumber: account.accountNumber,
+        bankName: account.bankName,
+        ifscCode: account.ifscCode,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log('✅ Bank accounts seeded.');
+
+  await prisma.$disconnect();
+  await pool.end();
 }
 
 main()
-  .catch(console.error)
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .catch(console.error);

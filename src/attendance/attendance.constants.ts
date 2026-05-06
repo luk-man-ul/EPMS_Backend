@@ -5,8 +5,8 @@
 
 export const OFFICE_LATITUDE = 11.982748317280704;
 export const OFFICE_LONGITUDE = 75.36459629666871;
-export const ALLOWED_RADIUS_METERS = 250;
-export const MAX_SESSION_HOURS = 12;
+export const ALLOWED_RADIUS_METERS = 200;
+export const MAX_SESSION_HOURS = 10;
 
 /**
  * Calculate distance between two GPS coordinates using the Haversine formula.
