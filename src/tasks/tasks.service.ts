@@ -667,32 +667,73 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
   ////////////////////////////////////////////////////////////
 
  if (user.role === 'EMPLOYEE') {
+  // Rule 1: Employees can only touch their own tasks
   if (task.assignedToId !== user.id) {
     throw new ForbiddenException('You can only update your own tasks');
   }
 
-  // Must include status
-  if (dto.status === undefined) {
-    throw new ForbiddenException(
-      'Employees can only update task status'
-    );
-  }
-
-  // Only allow status field
-  const allowedFields = ['status'];
-
+  // Determine which fields the employee is trying to change
   const incomingFields = Object.entries(dto)
-    .filter(([_, value]) => value !== undefined)
+    .filter(([, value]) => value !== undefined)
     .map(([key]) => key);
 
-  const invalidUpdate = incomingFields.some(
-    (field) => !allowedFields.includes(field)
-  );
+  const isStatusOnlyUpdate =
+    incomingFields.length === 1 && incomingFields[0] === 'status';
 
-  if (invalidUpdate) {
-    throw new ForbiddenException(
-      'Employees cannot modify task details'
-    );
+  const hasNonStatusFields = incomingFields.some((f) => f !== 'status');
+
+  // ── Path A: Status-only update ──────────────────────────────────────────
+  // Employees can always update the status of their own tasks.
+  // validateStatusTransition() enforces which transitions are allowed.
+  if (isStatusOnlyUpdate) {
+    // Fall through to the status-history block below — no further checks needed.
+  }
+
+  // ── Path B: Field edit (non-status fields present) ──────────────────────
+  else if (hasNonStatusFields) {
+    // Field edits are ONLY allowed on the employee's own SELF_WORK task
+    // while it is still in PROPOSED status (i.e. not yet approved).
+    if (task.type !== TaskType.SELF_WORK) {
+      throw new ForbiddenException(
+        'Employees can only edit their own self-work tasks',
+      );
+    }
+
+    if (task.createdById !== user.id) {
+      throw new ForbiddenException(
+        'You can only edit tasks you created',
+      );
+    }
+
+    if (task.status !== TaskStatus.PROPOSED) {
+      throw new ForbiddenException(
+        'Self-work tasks can only be edited before approval',
+      );
+    }
+
+    // Whitelist of fields an employee may edit on their PROPOSED SELF_WORK task
+    const editableFields = ['title', 'description', 'priority', 'dueDate', 'estimatedHrs', 'status'];
+
+    // Blocked structural fields — reject immediately if present
+    const blockedFields = ['assignedToId', 'projectId', 'type', 'createdById', 'approvedById'];
+
+    for (const field of incomingFields) {
+      if (blockedFields.includes(field)) {
+        throw new ForbiddenException(
+          `Employees cannot modify the '${field}' field`,
+        );
+      }
+      if (!editableFields.includes(field)) {
+        throw new ForbiddenException(
+          `Employees cannot modify the '${field}' field`,
+        );
+      }
+    }
+  }
+
+  // ── Path C: Empty DTO ────────────────────────────────────────────────────
+  else {
+    // Nothing to update — let it fall through (no-op update is harmless)
   }
 }
 
@@ -748,6 +789,11 @@ async update(id: string, dto: UpdateTaskDto, user: any) {
     updateData.dueDate = dto.dueDate
       ? new Date(dto.dueDate)
       : null
+  }
+
+  // estimatedHrs is editable by employees on their own PROPOSED SELF_WORK tasks
+  if ((dto as any).estimatedHrs !== undefined) {
+    updateData.estimatedHrs = (dto as any).estimatedHrs
   }
 
   if (dto.projectId !== undefined) {
