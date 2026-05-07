@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ExpenseType, InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
+import { InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CreateRevenueDto } from './dto/create-revenue.dto';
@@ -13,6 +13,11 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { QueryRevenueDto, QueryExpenseDto, QueryLedgerDto, QueryInvoiceDto } from './dto/query-finance.dto';
+
+// ── Helper: check if a category name represents a salary expense ──────────────
+// Uses case-insensitive comparison so "Salary", "SALARY", "salary" all match.
+const isSalaryCategory = (name?: string | null): boolean =>
+  name?.toLowerCase() === 'salary';
 
 // ─── Shared include shapes ────────────────────────────────────────────────────
 
@@ -133,9 +138,16 @@ export class FinanceService {
   // ─────────────────────────────────────────────
 
   async createExpense(dto: CreateExpenseDto, userId: string) {
-    // Existing validation — unchanged
-    if (dto.type === ExpenseType.SALARY && !dto.employeeId) {
-      throw new BadRequestException('employeeId is required when type is SALARY');
+    // Resolve the category first — needed for salary detection
+    const category = await this.prisma.expenseCategory.findUnique({
+      where: { id: dto.categoryId },
+    });
+    if (!category) throw new NotFoundException('Expense category not found');
+    if (!category.isActive) throw new BadRequestException('Expense category is inactive');
+
+    // Salary expenses require an employee
+    if (isSalaryCategory(category.name) && !dto.employeeId) {
+      throw new BadRequestException('employeeId is required for Salary expenses');
     }
 
     if (dto.employeeId) {
@@ -152,7 +164,6 @@ export class FinanceService {
       if (!project) throw new NotFoundException('Project not found');
     }
 
-    // Validate bank account if provided
     if (dto.bankAccountId) {
       const bank = await this.prisma.bankAccount.findUnique({
         where: { id: dto.bankAccountId },
@@ -161,20 +172,10 @@ export class FinanceService {
       if (!bank.isActive) throw new BadRequestException('Bank account is inactive');
     }
 
-    // Validate category if provided
-    if (dto.categoryId) {
-      const category = await this.prisma.expenseCategory.findUnique({
-        where: { id: dto.categoryId },
-      });
-      if (!category) throw new NotFoundException('Expense category not found');
-      if (!category.isActive) throw new BadRequestException('Expense category is inactive');
-    }
-
     // Atomic: create Expense + LedgerEntry together
     const result = await this.prisma.$transaction(async (tx) => {
       const expense = await tx.expense.create({
         data: {
-          type:          dto.type,
           amount:        dto.amount,
           expenseDate:   new Date(dto.expenseDate),
           employeeId:    dto.employeeId ?? null,
@@ -183,7 +184,7 @@ export class FinanceService {
           createdById:   userId,
           paymentMethod: dto.paymentMethod ?? null,
           bankAccountId: dto.bankAccountId ?? null,
-          categoryId:    dto.categoryId ?? null,
+          categoryId:    dto.categoryId,
         },
         include: EXPENSE_INCLUDE,
       });
@@ -195,7 +196,7 @@ export class FinanceService {
           referenceId:   expense.id,
           amount:        expense.amount,
           date:          expense.expenseDate,
-          description:   expense.description ?? `Expense: ${expense.type}`,
+          description:   expense.description ?? `Expense: ${category.name}`,
           createdById:   userId,
         },
       });
@@ -211,7 +212,7 @@ export class FinanceService {
 
     if (query.projectId)  where.projectId  = query.projectId;
     if (query.employeeId) where.employeeId = query.employeeId;
-    if (query.type)       where.type       = query.type;
+    if (query.categoryId) where.categoryId = query.categoryId;
 
     if (query.startDate || query.endDate) {
       where.expenseDate = {};
@@ -288,8 +289,14 @@ export class FinanceService {
     });
     if (!employee) throw new NotFoundException('Employee not found');
 
+    // Sum all expenses for this employee whose category name is "Salary"
+    // (case-insensitive via the isSalaryCategory helper at the top of this file).
+    // We join through the category relation and filter by name.
     const agg = await this.prisma.expense.aggregate({
-      where: { employeeId, type: ExpenseType.SALARY },
+      where: {
+        employeeId,
+        category: { name: { equals: 'Salary', mode: 'insensitive' } },
+      },
       _sum: { amount: true },
     });
 

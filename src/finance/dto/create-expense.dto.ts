@@ -6,16 +6,11 @@ import {
   IsUUID,
   IsPositive,
   IsEnum,
-  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ExpenseType, PaymentMethod } from '@prisma/client';
+import { PaymentMethod } from '@prisma/client';
 
 export class CreateExpenseDto {
-  @ApiProperty({ enum: ExpenseType, example: 'MANUAL' })
-  @IsEnum(ExpenseType)
-  type: ExpenseType;
-
   @ApiProperty({ example: 8500 })
   @IsNumber()
   @IsPositive()
@@ -25,9 +20,20 @@ export class CreateExpenseDto {
   @IsDateString()
   expenseDate: string;
 
-  @ApiPropertyOptional({ example: 'uuid-of-employee' })
+  @ApiProperty({
+    example: 'cuid-of-expense-category',
+    description:
+      'Expense category (required). Use GET /finance/expense-categories to list options. ' +
+      'Select the "Salary" category for employee salary expenses — this triggers employee validation.',
+  })
+  @IsString()
+  categoryId: string;
+
+  @ApiPropertyOptional({
+    example: 'uuid-of-employee',
+    description: 'Required when the selected category is "Salary"',
+  })
   @IsOptional()
-  @ValidateIf((o) => o.type === ExpenseType.SALARY)
   @IsUUID()
   employeeId?: string;
 
@@ -40,8 +46,6 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   description?: string;
-
-  // ── New optional fields ──────────────────────────────────────────────────
 
   @ApiPropertyOptional({
     enum: PaymentMethod,
@@ -59,12 +63,4 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   bankAccountId?: string;
-
-  @ApiPropertyOptional({
-    example: 'cuid-of-expense-category',
-    description: 'Expense category (Travel, Food, Salary, Miscellaneous, etc.)',
-  })
-  @IsOptional()
-  @IsString()
-  categoryId?: string;
 }

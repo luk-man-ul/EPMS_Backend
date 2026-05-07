@@ -95,11 +95,6 @@ enum ChannelType {
   PROJECT
 }
 
-enum ExpenseType {
-  SALARY
-  MANUAL
-}
-
 enum PaymentMethod {
   CASH
   ONLINE
@@ -559,8 +554,7 @@ model Revenue {
 }
 
 model Expense {
-  id          String      @id @default(uuid())
-  type        ExpenseType
+  id          String  @id @default(uuid())
   amount      Float
   expenseDate DateTime
   employeeId  String?
@@ -568,16 +562,16 @@ model Expense {
   description String?
   createdById String
 
-  // Extended fields (nullable — safe for existing records)
+  // Extended fields
   paymentMethod PaymentMethod?
   bankAccountId String?
-  categoryId    String?
+  categoryId    String         // required — every expense must have a category
 
-  employee    User?            @relation("ExpenseEmployee", fields: [employeeId], references: [id])
-  project     Project?         @relation(fields: [projectId], references: [id])
-  createdBy   User             @relation("ExpenseCreator", fields: [createdById], references: [id])
-  bankAccount BankAccount?     @relation(fields: [bankAccountId], references: [id])
-  category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  employee    User?           @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+  project     Project?        @relation(fields: [projectId], references: [id])
+  createdBy   User            @relation("ExpenseCreator", fields: [createdById], references: [id])
+  bankAccount BankAccount?    @relation(fields: [bankAccountId], references: [id])
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
 
   createdAt DateTime @default(now())
 

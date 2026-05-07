@@ -1,6 +1,6 @@
 import { IsOptional, IsUUID, IsDateString, IsEnum, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { ExpenseType, InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
+import { InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
 
 export class QueryRevenueDto {
   @ApiPropertyOptional({ example: 'uuid-of-project' })
@@ -30,10 +30,10 @@ export class QueryExpenseDto {
   @IsUUID()
   employeeId?: string;
 
-  @ApiPropertyOptional({ enum: ExpenseType })
+  @ApiPropertyOptional({ example: 'cuid-of-category', description: 'Filter by expense category id' })
   @IsOptional()
-  @IsEnum(ExpenseType)
-  type?: ExpenseType;
+  @IsString()
+  categoryId?: string;
 
   @ApiPropertyOptional({ example: '2026-01-01' })
   @IsOptional()
