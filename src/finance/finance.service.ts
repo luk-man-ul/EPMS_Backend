@@ -280,6 +280,108 @@ export class FinanceService {
   }
 
   // ─────────────────────────────────────────────
+  // ALL PROJECTS AGGREGATE
+  // ─────────────────────────────────────────────
+
+  async getAllProjectsProfit() {
+    // Aggregate revenue grouped by project
+    const [revenueGroups, expenseGroups, revenueCountGroups, expenseCountGroups] =
+      await Promise.all([
+        this.prisma.revenue.groupBy({
+          by: ['projectId'],
+          _sum: { amount: true },
+        }),
+        this.prisma.expense.groupBy({
+          by: ['projectId'],
+          where: { projectId: { not: null } },
+          _sum: { amount: true },
+        }),
+        this.prisma.revenue.groupBy({
+          by: ['projectId'],
+          _count: { id: true },
+        }),
+        this.prisma.expense.groupBy({
+          by: ['projectId'],
+          where: { projectId: { not: null } },
+          _count: { id: true },
+        }),
+      ]);
+
+    // Collect all unique projectIds that have any financial data
+    const projectIds = Array.from(
+      new Set([
+        ...revenueGroups.map((r) => r.projectId),
+        ...expenseGroups.map((e) => e.projectId).filter(Boolean),
+      ])
+    ) as string[];
+
+    if (projectIds.length === 0) {
+      return {
+        projects: [],
+        totalRevenue: 0,
+        totalExpense: 0,
+        totalProfit: 0,
+        topProject: null,
+      };
+    }
+
+    // Fetch project names in one query
+    const projects = await this.prisma.project.findMany({
+      where: { id: { in: projectIds } },
+      select: { id: true, name: true },
+    });
+    const projectMap = new Map(projects.map((p) => [p.id, p.name]));
+
+    // Build lookup maps
+    const revenueMap = new Map(
+      revenueGroups.map((r) => [r.projectId, r._sum.amount ?? 0])
+    );
+    const expenseMap = new Map(
+      expenseGroups.map((e) => [e.projectId as string, e._sum.amount ?? 0])
+    );
+    const revenueCountMap = new Map(
+      revenueCountGroups.map((r) => [r.projectId, r._count.id])
+    );
+    const expenseCountMap = new Map(
+      expenseCountGroups.map((e) => [e.projectId as string, e._count.id])
+    );
+
+    // Build per-project summaries
+    const summaries = projectIds
+      .map((projectId) => {
+        const revenue = revenueMap.get(projectId) ?? 0;
+        const expense = expenseMap.get(projectId) ?? 0;
+        const profit = revenue - expense;
+        const profitMargin =
+          revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0;
+
+        return {
+          projectId,
+          projectName: projectMap.get(projectId) ?? 'Unknown Project',
+          revenue,
+          expense,
+          profit,
+          profitMargin,
+          revenueCount: revenueCountMap.get(projectId) ?? 0,
+          expenseCount: expenseCountMap.get(projectId) ?? 0,
+        };
+      })
+      .sort((a, b) => b.profit - a.profit); // highest profit first
+
+    const totalRevenue = summaries.reduce((s, p) => s + p.revenue, 0);
+    const totalExpense = summaries.reduce((s, p) => s + p.expense, 0);
+    const totalProfit = totalRevenue - totalExpense;
+
+    return {
+      projects: summaries,
+      totalRevenue,
+      totalExpense,
+      totalProfit,
+      topProject: summaries.length > 0 ? summaries[0] : null,
+    };
+  }
+
+  // ─────────────────────────────────────────────
   // EMPLOYEE COST
   // ─────────────────────────────────────────────
 
@@ -303,6 +405,64 @@ export class FinanceService {
     return {
       employeeId,
       totalSalary: agg._sum.amount ?? 0,
+    };
+  }
+
+  // ─────────────────────────────────────────────
+  // ALL EMPLOYEES AGGREGATE
+  // ─────────────────────────────────────────────
+
+  async getAllEmployeesCost() {
+    // Aggregate only Salary-category expenses, grouped by employee
+    const salaryGroups = await this.prisma.expense.groupBy({
+      by: ['employeeId'],
+      where: {
+        employeeId: { not: null },
+        category: { name: { equals: 'Salary', mode: 'insensitive' } },
+      },
+      _sum: { amount: true },
+      _count: { id: true },
+    });
+
+    if (salaryGroups.length === 0) {
+      return {
+        employees: [],
+        totalPayroll: 0,
+        employeeCount: 0,
+        topEarner: null,
+      };
+    }
+
+    // Fetch employee names in one query
+    const employeeIds = salaryGroups
+      .map((g) => g.employeeId)
+      .filter(Boolean) as string[];
+
+    const employees = await this.prisma.user.findMany({
+      where: { id: { in: employeeIds } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const employeeMap = new Map(
+      employees.map((e) => [e.id, `${e.firstName} ${e.lastName}`])
+    );
+
+    // Build per-employee summaries
+    const summaries = salaryGroups
+      .map((g) => ({
+        employeeId:   g.employeeId as string,
+        employeeName: employeeMap.get(g.employeeId as string) ?? 'Unknown Employee',
+        totalSalary:  g._sum.amount ?? 0,
+        salaryCount:  g._count.id,
+      }))
+      .sort((a, b) => b.totalSalary - a.totalSalary); // highest salary first
+
+    const totalPayroll = summaries.reduce((s, e) => s + e.totalSalary, 0);
+
+    return {
+      employees: summaries,
+      totalPayroll,
+      employeeCount: summaries.length,
+      topEarner: summaries.length > 0 ? summaries[0] : null,
     };
   }
 

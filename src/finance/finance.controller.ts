@@ -146,6 +146,18 @@ export class FinanceController {
   }
 
   // ─────────────────────────────────────────────
+  // PROJECT PROFIT AGGREGATE (must be before :projectId)
+  // ─────────────────────────────────────────────
+
+  @Get('projects/summary')
+  @ApiOperation({ summary: 'Get aggregated profit summary for all projects' })
+  @ApiResponse({ status: 200, description: 'Returns all projects ranked by profit' })
+  getAllProjectsProfit(@Req() req) {
+    this.assertAdmin(req.user);
+    return this.financeService.getAllProjectsProfit();
+  }
+
+  // ─────────────────────────────────────────────
   // PROJECT PROFIT
   // ─────────────────────────────────────────────
 
@@ -156,6 +168,18 @@ export class FinanceController {
   getProjectProfit(@Param('projectId') projectId: string, @Req() req) {
     this.assertAdmin(req.user);
     return this.financeService.getProjectProfit(projectId);
+  }
+
+  // ─────────────────────────────────────────────
+  // EMPLOYEE COST AGGREGATE (must be before :employeeId)
+  // ─────────────────────────────────────────────
+
+  @Get('employees/summary')
+  @ApiOperation({ summary: 'Get aggregated salary cost summary for all employees' })
+  @ApiResponse({ status: 200, description: 'Returns all employees ranked by total salary' })
+  getAllEmployeesCost(@Req() req) {
+    this.assertAdmin(req.user);
+    return this.financeService.getAllEmployeesCost();
   }
 
   // ─────────────────────────────────────────────
