@@ -13,6 +13,7 @@ import {
   ApiBearerAuth,
   ApiBody,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -24,9 +25,12 @@ export class AuthController {
 
   ////////////////////////////////////////////////////////////
   // LOGIN (PUBLIC ROUTE)
+  // Rate-limited: max 5 attempts per 60 seconds per IP.
+  // Exceeding this returns HTTP 429 Too Many Requests.
   ////////////////////////////////////////////////////////////
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('login')
   @ApiOperation({ summary: 'Login with email and password' })
   @ApiBody({
@@ -41,8 +45,9 @@ export class AuthController {
   })
   @ApiResponse({ status: 200, description: 'Login successful, returns JWT token' })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  login(@Body() body: { email: string; password: string }) {
-    return this.authService.login(body.email, body.password);
+  @ApiResponse({ status: 429, description: 'Too Many Requests — max 5 login attempts per 60 seconds' })
+  login(@Body() body: { email: string; password: string; rememberMe?: boolean }) {
+    return this.authService.login(body.email, body.password, body.rememberMe ?? false);
   }
 
   ////////////////////////////////////////////////////////////

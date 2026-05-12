@@ -2,6 +2,7 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -38,6 +39,19 @@ import { HealthController } from './health/health.controller';
       envFilePath: '.env',
     }),
     ScheduleModule.forRoot(),
+
+    // ── Rate limiting ──────────────────────────────────────────────────────
+    // Default throttle: 100 requests per 60 seconds — effectively no-op for
+    // normal API usage. Individual endpoints override this with @Throttle().
+    // The 'default' name must match the name used in @Throttle() decorators.
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60000,   // 60 seconds (in milliseconds for v6+)
+        limit: 100,   // 100 requests — permissive default, does not affect normal use
+      },
+    ]),
+
     LoggerModule,
     PrismaModule,
     AuthModule,
@@ -63,13 +77,18 @@ import { HealthController } from './health/health.controller';
   providers: [
     AppService,
 
-    // 🔥 FIRST: JWT must run
+    // ── Guard execution order ──────────────────────────────────────────────
+    // 1. ThrottlerGuard  — blocks brute-force before any auth or DB work
+    // 2. JwtAuthGuard    — validates JWT token
+    // 3. PermissionGuard — checks role/permission codes
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-
-    // 🔥 SECOND: Permission guard runs after JWT
     {
       provide: APP_GUARD,
       useClass: PermissionGuard,

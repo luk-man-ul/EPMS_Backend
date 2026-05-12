@@ -29,6 +29,7 @@
     "@nestjs/platform-socket.io": "^11.1.16",
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/swagger": "^11.2.6",
+    "@nestjs/throttler": "^6.4.0",
     "@nestjs/websockets": "^11.1.16",
     "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
@@ -96,7 +97,8 @@
     "moduleNameMapper": {
       "^src/(.*)$": "<rootDir>/$1"
     }
-  },"prisma": {
-  "seed": "node prisma/seed.js"
-}
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  }
 }

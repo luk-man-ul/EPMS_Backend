@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { getISTStartOfDay, getISTStartOfNextDay, toISTDate } from '../common/utils/ist-date.util';
+import { getISTStartOfDay, getISTStartOfNextDay, getISTTimeToday, toISTDate } from '../common/utils/ist-date.util';
 
 @Injectable()
 export class AdminService {
@@ -139,18 +139,49 @@ export class AdminService {
 
     if (totalEmployeesCount > 0) {
       if (todayAttendanceData.length > 0) {
-        // Finalized data available — read directly from Attendance table
+        // Finalized data available — read directly from Attendance table.
+        // presentCount includes ALL statuses that represent a physical presence
+        // (PRESENT, LATE, WFH, HALF_DAY). LATE is a secondary flag — it does
+        // NOT exclude an employee from the present count.
         presentCount = todayAttendanceData.filter(
           (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'WFH' || a.status === 'HALF_DAY',
         ).length;
+
+        // lateCount: employees whose finalized status is LATE.
+        // These are already included in presentCount above.
         lateCount = todayAttendanceData.filter((a) => a.status === 'LATE').length;
       } else {
-        // Finalization hasn't run yet — fall back to live AttendanceSession count
+        // Finalization hasn't run yet (mid-day) — fall back to live AttendanceSession data.
+        // Fetch each session's checkIn time so we can detect late arrivals.
         const liveSessions = await this.prisma.attendanceSession.findMany({
           where: { checkIn: { gte: today, lt: nextDay } },
-          select: { userId: true },
+          select: { userId: true, checkIn: true },
         });
-        presentCount = new Set(liveSessions.map((s) => s.userId)).size;
+
+        // Deduplicate by userId — keep the earliest check-in per employee.
+        // An employee may have multiple sessions (e.g. break + return); only
+        // the first check-in of the day determines whether they are late.
+        const earliestCheckInByUser = new Map<string, Date>();
+        for (const session of liveSessions) {
+          const existing = earliestCheckInByUser.get(session.userId);
+          if (!existing || session.checkIn < existing) {
+            earliestCheckInByUser.set(session.userId, session.checkIn);
+          }
+        }
+
+        // Any employee with at least one session today is PRESENT.
+        presentCount = earliestCheckInByUser.size;
+
+        // Late threshold: 11:00 AM IST.
+        // getISTTimeToday(11, 0) returns the UTC equivalent of 11:00 AM IST today,
+        // so the comparison is timezone-correct without any raw UTC hour arithmetic.
+        const lateThreshold = getISTTimeToday(11, 0);
+        lateCount = 0;
+        for (const firstCheckIn of earliestCheckInByUser.values()) {
+          if (firstCheckIn >= lateThreshold) {
+            lateCount++;
+          }
+        }
       }
 
       absentCount = totalEmployeesCount - presentCount;
