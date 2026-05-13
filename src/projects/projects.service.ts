@@ -165,7 +165,10 @@ export class ProjectsService {
             } 
           },
           tasks: {
-            where: { isDeleted: false },
+            where: {
+              isDeleted: false,
+              status: { notIn: ['PROPOSED', 'REJECTED', 'CANCELLED'] },
+            },
             select: { status: true },
           },
         },
@@ -175,8 +178,11 @@ export class ProjectsService {
     ]);
 
     const formatted = projects.map((project) => {
-      const totalTasks = project.tasks.length;
-      const completedTasks = project.tasks.filter(
+      const eligibleTasks = project.tasks.filter(
+        (t) => !['PROPOSED', 'REJECTED', 'CANCELLED'].includes(t.status),
+      );
+      const totalTasks = eligibleTasks.length;
+      const completedTasks = eligibleTasks.filter(
         (t) => t.status === 'COMPLETED',
       ).length;
 
@@ -255,7 +261,10 @@ if (project.status === 'COMPLETED' || project.status === 'ARCHIVED') {
           },
         },
         tasks: {
-          where: { isDeleted: false },
+          where: {
+            isDeleted: false,
+            status: { notIn: ['PROPOSED', 'REJECTED', 'CANCELLED'] },
+          },
           select: { status: true },
         },
       },
@@ -475,7 +484,10 @@ private async performProjectUpdate(
       lead: true,
       members: { include: { user: true } },
       tasks: {
-        where: { isDeleted: false },
+        where: {
+          isDeleted: false,
+          status: { notIn: ['PROPOSED', 'REJECTED', 'CANCELLED'] },
+        },
         select: { status: true },
       },
     },
@@ -548,7 +560,10 @@ async updateProjectStatus(
         lead: true,
         members: { include: { user: true } },
         tasks: {
-          where: { isDeleted: false },
+          where: {
+            isDeleted: false,
+            status: { notIn: ['PROPOSED', 'REJECTED', 'CANCELLED'] },
+          },
           select: { status: true },
         },
       },
@@ -584,7 +599,10 @@ async updateProjectStatus(
         lead: true,
         members: { include: { user: true } },
         tasks: {
-          where: { isDeleted: false },
+          where: {
+            isDeleted: false,
+            status: { notIn: ['PROPOSED', 'REJECTED', 'CANCELLED'] },
+          },
           select: { status: true },
         },
       },
@@ -633,12 +651,21 @@ async updateProjectStatus(
   ////////////////////////////////////////////////////////////
 
   private formatProject(project: any) {
-    const totalTasks = project.tasks?.length || 0;
+    // Exclude PROPOSED, REJECTED, and CANCELLED tasks from progress denominator.
+    // These statuses represent unapproved self-work, rejected proposals, or
+    // abandoned tasks — none of which should affect project completion percentage.
+    const EXCLUDED_FROM_PROGRESS = ['PROPOSED', 'REJECTED', 'CANCELLED'];
+    const eligibleTasks =
+      project.tasks?.filter(
+        (t: any) => !EXCLUDED_FROM_PROGRESS.includes(t.status),
+      ) ?? [];
+
+    const totalTasks = eligibleTasks.length;
 
 const completedTasks =
-  project.tasks?.filter(
-    (t) => t.status === 'COMPLETED',
-  ).length || 0;
+  eligibleTasks.filter(
+    (t: any) => t.status === 'COMPLETED',
+  ).length;
 
 let progress = 0;
 

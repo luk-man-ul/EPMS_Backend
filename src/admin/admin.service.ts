@@ -82,10 +82,16 @@ export class AdminService {
         },
       }),
 
-      // Monthly Finance Income
-      this.prisma.projectFinance.aggregate({
+      // Monthly Finance Income — sum Revenue.amount for the current calendar month
+      this.prisma.revenue.aggregate({
+        where: {
+          receivedDate: {
+            gte: firstDayOfMonth,
+            lte: lastDayOfMonth,
+          },
+        },
         _sum: {
-          totalIncome: true,
+          amount: true,
         },
       }),
 
@@ -110,10 +116,16 @@ export class AdminService {
         },
       }),
 
-      // Monthly Expense Data
-      this.prisma.projectFinance.aggregate({
+      // Monthly Expense Data — sum Expense.amount for the current calendar month
+      this.prisma.expense.aggregate({
+        where: {
+          expenseDate: {
+            gte: firstDayOfMonth,
+            lte: lastDayOfMonth,
+          },
+        },
         _sum: {
-          totalExpense: true,
+          amount: true,
         },
       }),
 
@@ -212,10 +224,10 @@ export class AdminService {
     const ticketResolutionPercentage =
       totalTickets > 0 ? Math.round((resolvedTickets / totalTickets) * 100) : 0;
 
-    // Calculate monthly finance
-    const monthlyIncome = monthlyFinanceData._sum.totalIncome || 0;
-    const monthlyExpense = monthlyExpenseData._sum.totalExpense || 0;
-    const monthlyProfit = monthlyIncome - monthlyExpense;
+    // Calculate monthly finance from real Revenue and Expense records
+    const monthlyIncome  = monthlyFinanceData._sum.amount  ?? 0;
+    const monthlyExpense = monthlyExpenseData._sum.amount  ?? 0;
+    const monthlyProfit  = monthlyIncome - monthlyExpense;
 
     // Count expense approvals pending (expense module not implemented yet)
     const expenseApprovalsPending = 0;
