@@ -6,6 +6,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import * as fs from 'fs';
+import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -28,11 +29,14 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
-  // Enable CORS
- app.enableCors({
-  origin: process.env.FRONTEND_URL?.split(','),
-  credentials: true,
-});
+  // Enable CORS — credentials:true required for httpOnly cookie exchange
+  app.enableCors({
+    origin:      process.env.FRONTEND_URL?.split(','),
+    credentials: true,
+  });
+
+  // Parse cookies — required for reading the httpOnly refresh_token cookie
+  app.use(cookieParser());
 
   // Get Winston logger
   const logger = app.get(WINSTON_MODULE_NEST_PROVIDER);

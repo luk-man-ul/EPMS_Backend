@@ -191,6 +191,9 @@ model User {
   createdLedgerEntries LedgerEntry[] @relation("LedgerEntryCreator")
   createdInvoices      Invoice[]     @relation("InvoiceCreator")
 
+  // Auth
+  refreshTokens RefreshToken[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -873,6 +876,27 @@ model Holiday {
 
   @@unique([date])
   @@index([date])
+}
+
+//////////////////////////////////////////////////////
+// AUTH — REFRESH TOKENS
+//////////////////////////////////////////////////////
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique  // bcrypt hash of the raw token — never store raw
+  expiresAt DateTime
+  revokedAt DateTime?           // null = active; non-null = revoked
+  userAgent String?             // optional: browser/device fingerprint
+  ipAddress String?             // optional: anomaly detection
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 //////////////////////////////////////////////////////
