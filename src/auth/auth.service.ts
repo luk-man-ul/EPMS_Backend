@@ -13,9 +13,8 @@ import * as crypto from 'crypto';
 /** Access token lifetime — short-lived, stored in memory only */
 const ACCESS_TOKEN_EXPIRY = '15m';
 
-/** Refresh token lifetimes */
-const REFRESH_TOKEN_EXPIRY_NORMAL    = 7;   // days
-const REFRESH_TOKEN_EXPIRY_REMEMBER  = 30;  // days
+/** Refresh token lifetime */
+const REFRESH_TOKEN_EXPIRY_DAYS = 7;   // days
 
 /** bcrypt cost for hashing refresh tokens */
 const REFRESH_TOKEN_HASH_ROUNDS = 10;
@@ -111,15 +110,12 @@ export class AuthService {
    */
   async generateRefreshToken(
     userId:     string,
-    rememberMe: boolean,
     userAgent?: string,
     ipAddress?: string,
   ): Promise<{ rawToken: string; expiresAt: Date; expiresInSeconds: number }> {
     const rawToken = crypto.randomBytes(64).toString('hex'); // 128 hex chars
 
-    const daysToExpiry = rememberMe
-      ? REFRESH_TOKEN_EXPIRY_REMEMBER
-      : REFRESH_TOKEN_EXPIRY_NORMAL;
+    const daysToExpiry = REFRESH_TOKEN_EXPIRY_DAYS;
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + daysToExpiry);
@@ -207,7 +203,6 @@ export class AuthService {
   async login(
     email:      string,
     password:   string,
-    rememberMe  = false,
     userAgent?: string,
     ipAddress?: string,
   ): Promise<{ tokenPair: TokenPair; user: AuthUser }> {
@@ -242,10 +237,9 @@ export class AuthService {
     // 5. Issue access token (15 min)
     const access_token = this.generateAccessToken(authUser, tokenVersion);
 
-    // 6. Issue refresh token (7d or 30d), store hash in DB
+    // 6. Issue refresh token (7d), store hash in DB
     const { rawToken, expiresInSeconds } = await this.generateRefreshToken(
       user.id,
-      rememberMe,
       userAgent,
       ipAddress,
     );
@@ -272,7 +266,6 @@ export class AuthService {
   async refreshAccessToken(
     rawRefreshToken: string,
     userId:          string,
-    rememberMe:      boolean,
     userAgent?:      string,
     ipAddress?:      string,
   ): Promise<{ tokenPair: TokenPair; user: AuthUser }> {
@@ -303,10 +296,9 @@ export class AuthService {
     // 5. Issue new access token
     const access_token = this.generateAccessToken(authUser, tokenVersion);
 
-    // 6. Issue new refresh token (same expiry policy as original login)
+    // 6. Issue new refresh token (same 7d expiry)
     const { rawToken, expiresInSeconds } = await this.generateRefreshToken(
       userId,
-      rememberMe,
       userAgent,
       ipAddress,
     );

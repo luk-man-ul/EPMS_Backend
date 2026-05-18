@@ -78,9 +78,8 @@ export class AuthController {
       type: 'object',
       required: ['email', 'password'],
       properties: {
-        email:      { type: 'string', example: 'admin@company.com' },
-        password:   { type: 'string', example: 'password123' },
-        rememberMe: { type: 'boolean', example: false },
+        email:    { type: 'string', example: 'admin@company.com' },
+        password: { type: 'string', example: 'password123' },
       },
     },
   })
@@ -88,7 +87,7 @@ export class AuthController {
   @ApiResponse({ status: 401,  description: 'Invalid credentials' })
   @ApiResponse({ status: 429,  description: 'Too many requests' })
   async login(
-    @Body() body: { email: string; password: string; rememberMe?: boolean },
+    @Body() body: { email: string; password: string },
     @Req()  req:  Request,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -99,7 +98,6 @@ export class AuthController {
     const { tokenPair, user } = await this.authService.login(
       body.email,
       body.password,
-      body.rememberMe ?? false,
       userAgent,
       ipAddress,
     );
@@ -117,15 +115,6 @@ export class AuthController {
       sameSite: isProd ? 'none' : 'lax',
       maxAge:   tokenPair.refresh_expires_in * 1000,
       path:     '/',
-    });
-
-    // Set remember_me flag cookie so refresh endpoint knows expiry policy
-    res.cookie('remember_me', body.rememberMe ? '1' : '0', {
-      httpOnly: false,
-      secure:   isProd,
-      sameSite: isProd ? 'none' : 'lax',
-      maxAge:   tokenPair.refresh_expires_in * 1000,
-      path:     '/auth',
     });
 
     // Return access token in body + user snapshot
@@ -166,9 +155,6 @@ export class AuthController {
       throw new UnauthorizedException('Session expired — please log in again');
     }
 
-    // rememberMe preference stored in cookie to preserve expiry policy on rotation
-    const rememberMe = req.cookies?.['remember_me'] === '1';
-
     const userAgent = req.headers['user-agent'];
     const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
       ?? req.socket.remoteAddress;
@@ -176,7 +162,6 @@ export class AuthController {
     const { tokenPair, user } = await this.authService.refreshAccessToken(
       rawRefreshToken,
       userId,
-      rememberMe,
       userAgent,
       ipAddress,
     );
@@ -220,9 +205,8 @@ export class AuthController {
     }
 
     clearRefreshCookie(res);
-    // Also clear uid and remember_me cookies
-    res.clearCookie('uid',         { path: '/auth' });
-    res.clearCookie('remember_me', { path: '/auth' });
+    // Also clear uid cookie
+    res.clearCookie('uid', { path: '/' });
 
     return { message: 'Logged out successfully' };
   }
