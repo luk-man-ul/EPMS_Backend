@@ -455,10 +455,24 @@ export class AttendanceService {
       const lateThreshold = getISTTimeToday(LATE_HOUR, LATE_MINUTE, todayIST);
       const halfDayThreshold = getISTTimeToday(HALF_DAY_CHECKIN_HOUR, HALF_DAY_CHECKIN_MINUTE, todayIST);
 
+      // Non-working-day guard: mirrors the same guard in getCalendarView() and
+      // getStats(). On weekends/holidays, employees with no sessions must NOT
+      // generate ABSENT live records — that would create stale rows that the
+      // calendar frontend would misclassify as "Worked on Weekend/Holiday".
+      const todayISTDateForGuard = toISTDate(todayIST);
+      const todayHolidayForGuard = await this.prisma.holiday.findUnique({
+        where: { date: todayISTDateForGuard },
+      });
+      const todayIsNonWorkingDay = !isWorkingDay(todayIST) || !!todayHolidayForGuard;
+
       const liveRecords: any[] = [];
 
       for (const uid of todayUserIds) {
         const sessions = sessionsByUser.get(uid) ?? [];
+
+        // Skip employees with no sessions on non-working days — do NOT inject ABSENT
+        if (todayIsNonWorkingDay && sessions.length === 0) continue;
+
         const isWfh = permanentWfhUserIds.has(uid) || wfhRequestUserIds.has(uid);
         const isOnLeave = leaveUserIds.has(uid);
         const { status, firstCheckIn, lastCheckOut, totalHours } =
