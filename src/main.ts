@@ -55,8 +55,8 @@ async function bootstrap() {
   );
 
   // Global exception filter
-  app.useGlobalFilters(new AllExceptionsFilter(logger));
-
+  app.useGlobalFilters(new AllExceptionsFilter(logger));  
+  
   // Swagger API Documentation
   const config = new DocumentBuilder()
     .setTitle('EMPS API')

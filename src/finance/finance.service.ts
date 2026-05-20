@@ -1,11 +1,12 @@
 import {
   Injectable,
   BadRequestException,
+  InternalServerErrorException,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
+import { Prisma, InvoiceStatus, LedgerEntryType, LedgerReferenceType } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CreateRevenueDto } from './dto/create-revenue.dto';
@@ -15,9 +16,68 @@ import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { QueryRevenueDto, QueryExpenseDto, QueryLedgerDto, QueryInvoiceDto } from './dto/query-finance.dto';
 
 // ── Helper: check if a category name represents a salary expense ──────────────
-// Uses case-insensitive comparison so "Salary", "SALARY", "salary" all match.
 const isSalaryCategory = (name?: string | null): boolean =>
   name?.toLowerCase() === 'salary';
+
+// ── Decimal serialization helpers ─────────────────────────────────────────────
+// Prisma.Decimal.toJSON() returns a string, NOT a number.
+// All monetary Decimal fields MUST be converted to number at the service boundary
+// before returning in API responses, otherwise JSON.stringify produces strings.
+
+/**
+ * Convert a Prisma.Decimal (or null/undefined) to a plain JS number.
+ * Returns 0 for null/undefined.
+ * Throws InternalServerErrorException if the result is non-finite (NaN/Infinity).
+ */
+function serializeDecimal(d: Prisma.Decimal | null | undefined): number {
+  if (d === null || d === undefined) return 0;
+  const n = d.toNumber();
+  if (!isFinite(n)) {
+    throw new InternalServerErrorException(
+      `Invalid monetary value encountered: ${d.toString()}`,
+    );
+  }
+  return n;
+}
+
+/** Serialize a Revenue record — converts amount from Prisma.Decimal to number. */
+function serializeRevenue<T extends { amount: Prisma.Decimal }>(r: T): Omit<T, 'amount'> & { amount: number } {
+  return { ...r, amount: serializeDecimal(r.amount) };
+}
+
+/** Serialize an Expense record — converts amount from Prisma.Decimal to number. */
+function serializeExpense<T extends { amount: Prisma.Decimal }>(e: T): Omit<T, 'amount'> & { amount: number } {
+  return { ...e, amount: serializeDecimal(e.amount) };
+}
+
+/** Serialize a LedgerEntry record — converts amount from Prisma.Decimal to number. */
+function serializeLedgerEntry<T extends { amount: Prisma.Decimal }>(e: T): Omit<T, 'amount'> & { amount: number } {
+  return { ...e, amount: serializeDecimal(e.amount) };
+}
+
+/**
+ * Serialize an Invoice record — converts all monetary Decimal fields to number:
+ * totalAmount, items[].quantity, items[].unitPrice, items[].total, revenue?.amount
+ */
+function serializeInvoice<
+  TItem extends { quantity: Prisma.Decimal; unitPrice: Prisma.Decimal; total: Prisma.Decimal },
+  TRevenue extends { amount: Prisma.Decimal } | null | undefined,
+  T extends { totalAmount: Prisma.Decimal; items: TItem[]; revenue?: TRevenue },
+>(inv: T) {
+  return {
+    ...inv,
+    totalAmount: serializeDecimal(inv.totalAmount),
+    items: inv.items.map((item) => ({
+      ...item,
+      quantity:  serializeDecimal(item.quantity),
+      unitPrice: serializeDecimal(item.unitPrice),
+      total:     serializeDecimal(item.total),
+    })),
+    revenue: inv.revenue
+      ? { ...inv.revenue, amount: serializeDecimal(inv.revenue.amount) }
+      : inv.revenue,
+  };
+}
 
 // ─── Shared include shapes ────────────────────────────────────────────────────
 
@@ -58,6 +118,7 @@ const INVOICE_INCLUDE_FULL = {
 // List invoice include — same shape, items included
 const INVOICE_INCLUDE_LIST = INVOICE_INCLUDE_FULL;
 
+
 @Injectable()
 export class FinanceService {
   constructor(private prisma: PrismaService) {}
@@ -67,13 +128,11 @@ export class FinanceService {
   // ─────────────────────────────────────────────
 
   async createRevenue(dto: CreateRevenueDto, userId: string) {
-    // Validate project
     const project = await this.prisma.project.findUnique({
       where: { id: dto.projectId },
     });
     if (!project) throw new NotFoundException('Project not found');
 
-    // Validate bank account if provided
     if (dto.bankAccountId) {
       const bank = await this.prisma.bankAccount.findUnique({
         where: { id: dto.bankAccountId },
@@ -102,7 +161,8 @@ export class FinanceService {
           type:          LedgerEntryType.CREDIT,
           referenceType: LedgerReferenceType.REVENUE,
           referenceId:   revenue.id,
-          amount:        revenue.amount,
+          // revenue.amount is now Prisma.Decimal — convert to number for the write
+          amount:        revenue.amount.toNumber(),
           date:          revenue.receivedDate,
           description:   revenue.description ?? `Revenue: ${project.name}`,
           createdById:   userId,
@@ -112,7 +172,7 @@ export class FinanceService {
       return revenue;
     });
 
-    return result;
+    return serializeRevenue(result);
   }
 
   async getRevenues(query: QueryRevenueDto) {
@@ -126,11 +186,13 @@ export class FinanceService {
       if (query.endDate)   where.receivedDate.lte = new Date(query.endDate);
     }
 
-    return this.prisma.revenue.findMany({
+    const revenues = await this.prisma.revenue.findMany({
       where,
       include: REVENUE_INCLUDE,
       orderBy: { receivedDate: 'desc' },
     });
+
+    return revenues.map(serializeRevenue);
   }
 
   // ─────────────────────────────────────────────
@@ -138,14 +200,12 @@ export class FinanceService {
   // ─────────────────────────────────────────────
 
   async createExpense(dto: CreateExpenseDto, userId: string) {
-    // Resolve the category first — needed for salary detection
     const category = await this.prisma.expenseCategory.findUnique({
       where: { id: dto.categoryId },
     });
     if (!category) throw new NotFoundException('Expense category not found');
     if (!category.isActive) throw new BadRequestException('Expense category is inactive');
 
-    // Salary expenses require an employee
     if (isSalaryCategory(category.name) && !dto.employeeId) {
       throw new BadRequestException('employeeId is required for Salary expenses');
     }
@@ -194,7 +254,8 @@ export class FinanceService {
           type:          LedgerEntryType.DEBIT,
           referenceType: LedgerReferenceType.EXPENSE,
           referenceId:   expense.id,
-          amount:        expense.amount,
+          // expense.amount is now Prisma.Decimal — convert to number for the write
+          amount:        expense.amount.toNumber(),
           date:          expense.expenseDate,
           description:   expense.description ?? `Expense: ${category.name}`,
           createdById:   userId,
@@ -204,7 +265,7 @@ export class FinanceService {
       return expense;
     });
 
-    return result;
+    return serializeExpense(result);
   }
 
   async getExpenses(query: QueryExpenseDto) {
@@ -220,12 +281,15 @@ export class FinanceService {
       if (query.endDate)   where.expenseDate.lte = new Date(query.endDate);
     }
 
-    return this.prisma.expense.findMany({
+    const expenses = await this.prisma.expense.findMany({
       where,
       include: EXPENSE_INCLUDE,
       orderBy: { expenseDate: 'desc' },
     });
+
+    return expenses.map(serializeExpense);
   }
+
 
   // ─────────────────────────────────────────────
   // SUMMARY
@@ -237,8 +301,9 @@ export class FinanceService {
       this.prisma.expense.aggregate({ _sum: { amount: true } }),
     ]);
 
-    const totalRevenue = revenueAgg._sum.amount ?? 0;
-    const totalExpense = expenseAgg._sum.amount ?? 0;
+    // _sum.amount is now Prisma.Decimal | null — convert explicitly
+    const totalRevenue = serializeDecimal(revenueAgg._sum.amount);
+    const totalExpense = serializeDecimal(expenseAgg._sum.amount);
 
     return {
       totalRevenue,
@@ -268,8 +333,9 @@ export class FinanceService {
       }),
     ]);
 
-    const revenue = revenueAgg._sum.amount ?? 0;
-    const expense = expenseAgg._sum.amount ?? 0;
+    // _sum.amount is now Prisma.Decimal | null — convert explicitly
+    const revenue = serializeDecimal(revenueAgg._sum.amount);
+    const expense = serializeDecimal(expenseAgg._sum.amount);
 
     return {
       projectId,
@@ -284,7 +350,6 @@ export class FinanceService {
   // ─────────────────────────────────────────────
 
   async getAllProjectsProfit() {
-    // Aggregate revenue grouped by project
     const [revenueGroups, expenseGroups, revenueCountGroups, expenseCountGroups] =
       await Promise.all([
         this.prisma.revenue.groupBy({
@@ -307,7 +372,6 @@ export class FinanceService {
         }),
       ]);
 
-    // Collect all unique projectIds that have any financial data
     const projectIds = Array.from(
       new Set([
         ...revenueGroups.map((r) => r.projectId),
@@ -325,19 +389,18 @@ export class FinanceService {
       };
     }
 
-    // Fetch project names in one query
     const projects = await this.prisma.project.findMany({
       where: { id: { in: projectIds } },
       select: { id: true, name: true },
     });
     const projectMap = new Map(projects.map((p) => [p.id, p.name]));
 
-    // Build lookup maps
+    // _sum.amount is now Prisma.Decimal | null — convert to number in the maps
     const revenueMap = new Map(
-      revenueGroups.map((r) => [r.projectId, r._sum.amount ?? 0])
+      revenueGroups.map((r) => [r.projectId, serializeDecimal(r._sum.amount)])
     );
     const expenseMap = new Map(
-      expenseGroups.map((e) => [e.projectId as string, e._sum.amount ?? 0])
+      expenseGroups.map((e) => [e.projectId as string, serializeDecimal(e._sum.amount)])
     );
     const revenueCountMap = new Map(
       revenueCountGroups.map((r) => [r.projectId, r._count.id])
@@ -346,7 +409,7 @@ export class FinanceService {
       expenseCountGroups.map((e) => [e.projectId as string, e._count.id])
     );
 
-    // Build per-project summaries
+    // All values in revenueMap/expenseMap are now plain numbers
     const summaries = projectIds
       .map((projectId) => {
         const revenue = revenueMap.get(projectId) ?? 0;
@@ -366,7 +429,7 @@ export class FinanceService {
           expenseCount: expenseCountMap.get(projectId) ?? 0,
         };
       })
-      .sort((a, b) => b.profit - a.profit); // highest profit first
+      .sort((a, b) => b.profit - a.profit);
 
     const totalRevenue = summaries.reduce((s, p) => s + p.revenue, 0);
     const totalExpense = summaries.reduce((s, p) => s + p.expense, 0);
@@ -391,9 +454,6 @@ export class FinanceService {
     });
     if (!employee) throw new NotFoundException('Employee not found');
 
-    // Sum all expenses for this employee whose category name is "Salary"
-    // (case-insensitive via the isSalaryCategory helper at the top of this file).
-    // We join through the category relation and filter by name.
     const agg = await this.prisma.expense.aggregate({
       where: {
         employeeId,
@@ -404,7 +464,8 @@ export class FinanceService {
 
     return {
       employeeId,
-      totalSalary: agg._sum.amount ?? 0,
+      // _sum.amount is now Prisma.Decimal | null — convert explicitly
+      totalSalary: serializeDecimal(agg._sum.amount),
     };
   }
 
@@ -413,7 +474,6 @@ export class FinanceService {
   // ─────────────────────────────────────────────
 
   async getAllEmployeesCost() {
-    // Aggregate only Salary-category expenses, grouped by employee
     const salaryGroups = await this.prisma.expense.groupBy({
       by: ['employeeId'],
       where: {
@@ -433,7 +493,6 @@ export class FinanceService {
       };
     }
 
-    // Fetch employee names in one query
     const employeeIds = salaryGroups
       .map((g) => g.employeeId)
       .filter(Boolean) as string[];
@@ -446,15 +505,15 @@ export class FinanceService {
       employees.map((e) => [e.id, `${e.firstName} ${e.lastName}`])
     );
 
-    // Build per-employee summaries
+    // _sum.amount is now Prisma.Decimal | null — convert to number in summaries
     const summaries = salaryGroups
       .map((g) => ({
         employeeId:   g.employeeId as string,
         employeeName: employeeMap.get(g.employeeId as string) ?? 'Unknown Employee',
-        totalSalary:  g._sum.amount ?? 0,
+        totalSalary:  serializeDecimal(g._sum.amount),
         salaryCount:  g._count.id,
       }))
-      .sort((a, b) => b.totalSalary - a.totalSalary); // highest salary first
+      .sort((a, b) => b.totalSalary - a.totalSalary);
 
     const totalPayroll = summaries.reduce((s, e) => s + e.totalSalary, 0);
 
@@ -487,6 +546,7 @@ export class FinanceService {
       orderBy: { name: 'asc' },
     });
   }
+
 
   // ─────────────────────────────────────────────
   // LEDGER
@@ -522,8 +582,6 @@ export class FinanceService {
       .filter((e) => e.referenceType === LedgerReferenceType.EXPENSE)
       .map((e) => e.referenceId);
 
-    // Use explicit any maps — Prisma select return types are complex generics
-    // that don't unify cleanly with conditional empty arrays.
     const revenueMap = new Map<string, any>();
     const expenseMap = new Map<string, any>();
 
@@ -560,6 +618,8 @@ export class FinanceService {
 
       return {
         ...entry,
+        // entry.amount is now Prisma.Decimal — explicitly override the spread value
+        amount:        serializeDecimal(entry.amount),
         paymentMethod: linked?.paymentMethod ?? null,
         bankAccount:   linked?.bankAccount   ?? null,
         category:
@@ -577,29 +637,20 @@ export class FinanceService {
   /**
    * Generate the next sequential invoice number for the given year.
    * Format: INV-YYYY-NNNN  (e.g. INV-2026-0001)
-   * Runs inside the caller's transaction so the count is consistent.
    */
   private async generateInvoiceNo(
     tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
     year: number,
   ): Promise<string> {
     const prefix = `INV-${year}-`;
-
-    // Count existing invoices whose number starts with this year prefix.
-    // Using count is safe because invoiceNo has a @unique constraint —
-    // a concurrent insert with the same number will fail and the transaction
-    // will be retried by the caller if needed.
     const count = await tx.invoice.count({
       where: { invoiceNo: { startsWith: prefix } },
     });
-
     const seq = String(count + 1).padStart(4, '0');
     return `${prefix}${seq}`;
   }
 
   async createInvoice(dto: CreateInvoiceDto, userId: string) {
-    // ── Pre-transaction validations ──────────────────────────────────────────
-
     const project = await this.prisma.project.findUnique({
       where: { id: dto.projectId },
     });
@@ -618,17 +669,16 @@ export class FinanceService {
       }
     }
 
-    // ── Compute total from items (never trust frontend) ──────────────────────
+    // DTO items are plain JS numbers from JSON — arithmetic is safe
     const totalAmount = dto.items.reduce(
       (sum, item) => sum + item.quantity * item.unitPrice,
       0,
     );
 
-    // ── Atomic: invoice + items in one transaction ───────────────────────────
-    return this.prisma.$transaction(async (tx) => {
+    const invoice = await this.prisma.$transaction(async (tx) => {
       const invoiceNo = await this.generateInvoiceNo(tx, new Date().getFullYear());
 
-      const invoice = await tx.invoice.create({
+      return tx.invoice.create({
         data: {
           invoiceNo,
           projectId:     dto.projectId,
@@ -641,8 +691,6 @@ export class FinanceService {
           revenueId:     dto.revenueId     ?? null,
           totalAmount,
           createdById:   userId,
-          // status defaults to DRAFT per schema
-          // pdfPath is null until PDF generation is implemented
           items: {
             create: dto.items.map((item) => ({
               description: item.description,
@@ -654,9 +702,9 @@ export class FinanceService {
         },
         include: INVOICE_INCLUDE_FULL,
       });
-
-      return invoice;
     });
+
+    return serializeInvoice(invoice);
   }
 
   async getInvoices(query: QueryInvoiceDto) {
@@ -672,11 +720,13 @@ export class FinanceService {
       ];
     }
 
-    return this.prisma.invoice.findMany({
+    const invoices = await this.prisma.invoice.findMany({
       where,
       include: INVOICE_INCLUDE_LIST,
       orderBy: { createdAt: 'desc' },
     });
+
+    return invoices.map(serializeInvoice);
   }
 
   async getInvoiceById(id: string) {
@@ -685,23 +735,21 @@ export class FinanceService {
       include: INVOICE_INCLUDE_FULL,
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
-    return invoice;
+    return serializeInvoice(invoice);
   }
 
   async updateInvoice(id: string, dto: UpdateInvoiceDto) {
-    // ── Fetch current invoice ────────────────────────────────────────────────
     const existing = await this.prisma.invoice.findUnique({
       where: { id },
       select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException('Invoice not found');
 
-    // Cannot update a PAID invoice at all
     if (existing.status === InvoiceStatus.PAID) {
       throw new BadRequestException('A PAID invoice cannot be modified');
     }
 
-    // ── Compute new total if items are being replaced ────────────────────────
+    // DTO items are plain JS numbers from JSON — arithmetic is safe
     let totalAmount: number | undefined;
     if (dto.items && dto.items.length > 0) {
       totalAmount = dto.items.reduce(
@@ -710,9 +758,7 @@ export class FinanceService {
       );
     }
 
-    // ── Atomic update ────────────────────────────────────────────────────────
-    return this.prisma.$transaction(async (tx) => {
-      // Replace items only when a new items array is provided
+    const result = await this.prisma.$transaction(async (tx) => {
       if (dto.items && dto.items.length > 0) {
         await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
         await tx.invoiceItem.createMany({
@@ -741,6 +787,8 @@ export class FinanceService {
         include: INVOICE_INCLUDE_FULL,
       });
     });
+
+    return serializeInvoice(result);
   }
 
   async deleteInvoice(id: string) {
@@ -756,10 +804,7 @@ export class FinanceService {
       );
     }
 
-    // InvoiceItems are deleted via CASCADE (schema: onDelete: Cascade)
-    // Revenue record is NOT deleted — only the link is severed by deleting the invoice
     await this.prisma.invoice.delete({ where: { id } });
-
     return { success: true, message: `Invoice ${invoice.invoiceNo} deleted` };
   }
 
@@ -767,13 +812,6 @@ export class FinanceService {
   // PDF STORAGE
   // ─────────────────────────────────────────────
 
-  /**
-   * Receives a PDF buffer from the frontend, saves it to
-   * uploads/invoices/{invoiceNo}.pdf, updates Invoice.pdfPath,
-   * and returns the stored path.
-   *
-   * Safe to call multiple times — overwrites the existing file.
-   */
   async storePdf(id: string, pdfBuffer: Buffer): Promise<{ pdfPath: string }> {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id },
@@ -781,24 +819,19 @@ export class FinanceService {
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
 
-    // Sanitize filename: only alphanumeric + hyphens
     const safeName = invoice.invoiceNo.replace(/[^a-zA-Z0-9-]/g, '-');
     const filename = `${safeName}.pdf`;
 
-    // Ensure the invoices subdirectory exists
     const invoiceDir = path.join(process.cwd(), 'uploads', 'invoices');
     if (!fs.existsSync(invoiceDir)) {
       fs.mkdirSync(invoiceDir, { recursive: true });
     }
 
     const filePath = path.join(invoiceDir, filename);
-
-    // Write (overwrite if exists — safe regeneration)
     fs.writeFileSync(filePath, pdfBuffer);
 
     const pdfPath = `/uploads/invoices/${filename}`;
 
-    // Persist path on the invoice record
     await this.prisma.invoice.update({
       where: { id },
       data: { pdfPath },

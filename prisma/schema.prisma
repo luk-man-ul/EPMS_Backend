@@ -522,10 +522,10 @@ model WfhRequest {
 //////////////////////////////////////////////////////
 
 model ProjectFinance {
-  id           String @id @default(uuid())
-  projectId    String @unique
-  totalIncome  Float  @default(0)
-  totalExpense Float  @default(0)
+  id           String  @id @default(uuid())
+  projectId    String  @unique
+  totalIncome  Decimal @db.Decimal(15,2) @default(0)
+  totalExpense Decimal @db.Decimal(15,2) @default(0)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -533,7 +533,7 @@ model ProjectFinance {
 model Revenue {
   id           String   @id @default(uuid())
   projectId    String
-  amount       Float
+  amount       Decimal  @db.Decimal(15,2)
   receivedDate DateTime
   description  String?
   createdById  String
@@ -558,7 +558,7 @@ model Revenue {
 
 model Expense {
   id          String  @id @default(uuid())
-  amount      Float
+  amount      Decimal @db.Decimal(15,2)
   expenseDate DateTime
   employeeId  String?
   projectId   String?
@@ -621,7 +621,7 @@ model LedgerEntry {
   id            String              @id @default(cuid())
   type          LedgerEntryType
   referenceType LedgerReferenceType
-  amount        Float
+  amount        Decimal             @db.Decimal(15,2)
   date          DateTime
   description   String?
   referenceId   String
@@ -645,7 +645,7 @@ model Invoice {
   issueDate      DateTime
   dueDate        DateTime
   status         InvoiceStatus @default(DRAFT)
-  totalAmount    Float
+  totalAmount    Decimal       @db.Decimal(15,2)
   notes          String?
   pdfPath        String?
   revenueId      String?       @unique
@@ -665,12 +665,12 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   invoiceId   String
   description String
-  quantity    Float
-  unitPrice   Float
-  total       Float
+  quantity    Decimal @db.Decimal(15,2)
+  unitPrice   Decimal @db.Decimal(15,2)
+  total       Decimal @db.Decimal(15,2)
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 

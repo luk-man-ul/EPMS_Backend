@@ -225,8 +225,11 @@ export class AdminService {
       totalTickets > 0 ? Math.round((resolvedTickets / totalTickets) * 100) : 0;
 
     // Calculate monthly finance from real Revenue and Expense records
-    const monthlyIncome  = monthlyFinanceData._sum.amount  ?? 0;
-    const monthlyExpense = monthlyExpenseData._sum.amount  ?? 0;
+    // _sum.amount is Prisma.Decimal | null after Decimal migration — convert to number
+    const rawMonthlyIncome  = monthlyFinanceData._sum.amount;
+    const rawMonthlyExpense = monthlyExpenseData._sum.amount;
+    const monthlyIncome  = rawMonthlyIncome  ? rawMonthlyIncome.toNumber()  : 0;
+    const monthlyExpense = rawMonthlyExpense ? rawMonthlyExpense.toNumber() : 0;
     const monthlyProfit  = monthlyIncome - monthlyExpense;
 
     // Count expense approvals pending (expense module not implemented yet)
