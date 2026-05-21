@@ -585,6 +585,28 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
     });
   }
 
+  async createExpenseCategory(name: string) {
+    // Case-insensitive duplicate check — schema has @@unique([name]) but that
+    // is case-sensitive in Postgres by default, so we check explicitly first
+    // to return a clean 409 instead of a raw Prisma unique-constraint error.
+    const existing = await this.prisma.expenseCategory.findFirst({
+      where: { name: { equals: name.trim(), mode: 'insensitive' } },
+    });
+
+    if (existing) {
+      throw new ConflictException(
+        `Expense category "${name.trim()}" already exists`,
+      );
+    }
+
+    return this.prisma.expenseCategory.create({
+      data: {
+        name:     name.trim(),
+        isActive: true,
+      },
+    });
+  }
+
 
   // ─────────────────────────────────────────────
   // LEDGER

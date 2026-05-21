@@ -34,6 +34,7 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { CreatePaymentSourceDto } from './dto/create-payment-source.dto';
+import { CreateExpenseCategoryDto } from './dto/create-expense-category.dto';
 import { QueryRevenueDto, QueryExpenseDto, QueryLedgerDto, QueryInvoiceDto } from './dto/query-finance.dto';
 
 @ApiTags('finance')
@@ -152,6 +153,16 @@ createPaymentSource(
   getExpenseCategories(@Req() req) {
     this.assertAdmin(req.user);
     return this.financeService.getExpenseCategories();
+  }
+
+  @Post('expense-categories')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a new expense category' })
+  @ApiResponse({ status: 201, description: 'Expense category created successfully' })
+  @ApiResponse({ status: 409, description: 'Duplicate category name' })
+  createExpenseCategory(@Body() dto: CreateExpenseCategoryDto, @Req() req) {
+    this.assertAdmin(req.user);
+    return this.financeService.createExpenseCategory(dto.name);
   }
 
   // ─────────────────────────────────────────────
