@@ -118,6 +118,15 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+// ── Payment source type — extends BankAccount to support cash, UPI, petty cash, etc.
+enum PaymentSourceType {
+  BANK_ACCOUNT
+  CASH
+  UPI
+  PETTY_CASH
+  OTHER
+}
+
 //////////////////////////////////////////////////////
 // AUTH & RBAC
 //////////////////////////////////////////////////////
@@ -590,19 +599,22 @@ model Expense {
 //////////////////////////////////////////////////////
 
 model BankAccount {
-  id            String  @id @default(cuid())
+  id            String            @id @default(cuid())
   name          String
-  accountNumber String  @unique
-  bankName      String
+  type          PaymentSourceType @default(BANK_ACCOUNT)
+  accountNumber String?           // nullable — cash/UPI/petty cash have no account number
+  bankName      String?           // nullable — only relevant for BANK_ACCOUNT type
   ifscCode      String?
-  isActive      Boolean @default(true)
+  isActive      Boolean           @default(true)
 
   revenues  Revenue[]
   expenses  Expense[]
 
   createdAt DateTime @default(now())
 
+  @@unique([name, type])   // prevent duplicate "Cash" entries of the same type
   @@index([isActive])
+  @@index([type])
 }
 
 model ExpenseCategory {

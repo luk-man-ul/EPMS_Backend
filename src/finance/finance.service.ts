@@ -13,6 +13,7 @@ import { CreateRevenueDto } from './dto/create-revenue.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import { CreatePaymentSourceDto } from './dto/create-payment-source.dto';
 import { QueryRevenueDto, QueryExpenseDto, QueryLedgerDto, QueryInvoiceDto } from './dto/query-finance.dto';
 
 // ── Helper: check if a category name represents a salary expense ──────────────
@@ -84,7 +85,7 @@ function serializeInvoice<
 const REVENUE_INCLUDE = {
   project:     { select: { id: true, name: true } },
   createdBy:   { select: { id: true, firstName: true, lastName: true } },
-  bankAccount: { select: { id: true, name: true, bankName: true } },
+  bankAccount: { select: { id: true, name: true, type: true, bankName: true } },
   invoice:     { select: { id: true, invoiceNo: true, status: true } },
 } as const;
 
@@ -92,7 +93,7 @@ const EXPENSE_INCLUDE = {
   employee:    { select: { id: true, firstName: true, lastName: true } },
   project:     { select: { id: true, name: true } },
   createdBy:   { select: { id: true, firstName: true, lastName: true } },
-  bankAccount: { select: { id: true, name: true, bankName: true } },
+  bankAccount: { select: { id: true, name: true, type: true, bankName: true } },
   category:    { select: { id: true, name: true } },
 } as const;
 
@@ -537,6 +538,43 @@ export class FinanceService {
   }
 
   // ─────────────────────────────────────────────
+// PAYMENT SOURCES
+// ─────────────────────────────────────────────
+
+async getPaymentSources() {
+  return this.prisma.bankAccount.findMany({
+    where: { isActive: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
+async createPaymentSource(dto: CreatePaymentSourceDto) {
+  const existing = await this.prisma.bankAccount.findFirst({
+    where: {
+      name: dto.name,
+      type: dto.type,
+    },
+  });
+
+  if (existing) {
+    throw new ConflictException(
+      `Payment source "${dto.name}" already exists`,
+    );
+  }
+
+  return this.prisma.bankAccount.create({
+    data: {
+      name: dto.name,
+      type: dto.type,
+      accountNumber: dto.accountNumber ?? null,
+      bankName: dto.bankName ?? null,
+      ifscCode: dto.ifscCode ?? null,
+      isActive: true,
+    },
+  });
+}
+
+  // ─────────────────────────────────────────────
   // EXPENSE CATEGORIES
   // ─────────────────────────────────────────────
 
@@ -591,7 +629,7 @@ export class FinanceService {
         select: {
           id: true,
           paymentMethod: true,
-          bankAccount: { select: { id: true, name: true, bankName: true } },
+          bankAccount: { select: { id: true, name: true, type: true, bankName: true } },
         },
       });
       rows.forEach((r) => revenueMap.set(r.id, r));
@@ -603,7 +641,7 @@ export class FinanceService {
         select: {
           id: true,
           paymentMethod: true,
-          bankAccount: { select: { id: true, name: true, bankName: true } },
+          bankAccount: { select: { id: true, name: true, type: true, bankName: true } },
           category:    { select: { id: true, name: true } },
         },
       });

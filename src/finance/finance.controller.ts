@@ -33,6 +33,7 @@ import { CreateRevenueDto } from './dto/create-revenue.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import { CreatePaymentSourceDto } from './dto/create-payment-source.dto';
 import { QueryRevenueDto, QueryExpenseDto, QueryLedgerDto, QueryInvoiceDto } from './dto/query-finance.dto';
 
 @ApiTags('finance')
@@ -115,6 +116,31 @@ export class FinanceController {
     this.assertAdmin(req.user);
     return this.financeService.getBankAccounts();
   }
+
+  // ─────────────────────────────────────────────
+// PAYMENT SOURCES
+// ─────────────────────────────────────────────
+
+@Get('payment-sources')
+@ApiOperation({ summary: 'Get all active payment sources' })
+@ApiResponse({ status: 200, description: 'Returns payment sources including banks, cash, UPI, wallets' })
+getPaymentSources(@Req() req) {
+  this.assertAdmin(req.user);
+  return this.financeService.getPaymentSources();
+}
+
+@Post('payment-sources')
+@HttpCode(HttpStatus.CREATED)
+@ApiOperation({ summary: 'Create a payment source dynamically' })
+@ApiResponse({ status: 201, description: 'Payment source created successfully' })
+@ApiResponse({ status: 409, description: 'Duplicate payment source name/type' })
+createPaymentSource(
+  @Body() dto: CreatePaymentSourceDto,
+  @Req() req,
+) {
+  this.assertAdmin(req.user);
+  return this.financeService.createPaymentSource(dto);
+}
 
   // ─────────────────────────────────────────────
   // EXPENSE CATEGORIES
