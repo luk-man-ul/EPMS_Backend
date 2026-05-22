@@ -5,6 +5,9 @@ import {
   IsArray,
   ValidateNested,
   ArrayMinSize,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -50,9 +53,21 @@ export class CreateInvoiceDto {
   @IsString()
   revenueId?: string;
 
+  @ApiPropertyOptional({
+    example: 18,
+    description:
+      'GST percentage to apply on the subtotal (e.g. 18 for 18%). ' +
+      'If omitted or 0, no tax is applied and totalAmount = subtotal.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  taxPercentage?: number;
+
   @ApiProperty({
     type: [InvoiceItemDto],
-    description: 'Line items — at least one required. totalAmount is computed from items.',
+    description: 'Line items — at least one required. subtotal/taxAmount/totalAmount are computed server-side.',
   })
   @IsArray()
   @ArrayMinSize(1)

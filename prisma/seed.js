@@ -278,10 +278,8 @@ async function main() {
   ////////////////////////////////////////////////////////////
 
   const expenseCategories = [
-    { name: 'Travel' },
     { name: 'Food' },
     { name: 'Salary' },
-    { name: 'Miscellaneous' },
   ];
 
   for (const cat of expenseCategories) {
@@ -301,7 +299,7 @@ async function main() {
   // 7️⃣ SEED BANK ACCOUNTS
   ////////////////////////////////////////////////////////////
 
-  const bankAccounts = [
+  /*const bankAccounts = [
     {
       name: 'HDFC Current Account',
       accountNumber: 'HDFC-001-CURRENT',
@@ -337,10 +335,10 @@ async function main() {
   }
 
   console.log('✅ Bank accounts seeded.');
-
+*/
   await prisma.$disconnect();
   await pool.end();
-}
+} 
 
 main()
   .catch(console.error);

@@ -657,7 +657,11 @@ model Invoice {
   issueDate      DateTime
   dueDate        DateTime
   status         InvoiceStatus @default(DRAFT)
-  totalAmount    Decimal       @db.Decimal(15,2)
+  // ── GST fields (nullable — safe for existing invoices without GST) ──
+  subtotal       Decimal?      @db.Decimal(15,2)   // sum of item totals before tax
+  taxPercentage  Decimal?      @db.Decimal(5,2)    // e.g. 18.00 for 18% GST
+  taxAmount      Decimal?      @db.Decimal(15,2)   // computed: subtotal * taxPercentage / 100
+  totalAmount    Decimal       @db.Decimal(15,2)   // subtotal + taxAmount (or just subtotal if no GST)
   notes          String?
   pdfPath        String?
   revenueId      String?       @unique

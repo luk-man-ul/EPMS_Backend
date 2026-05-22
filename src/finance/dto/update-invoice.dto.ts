@@ -5,6 +5,9 @@ import {
   IsArray,
   ValidateNested,
   IsEnum,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -52,10 +55,20 @@ export class UpdateInvoiceDto {
   notes?: string;
 
   @ApiPropertyOptional({
+    example: 18,
+    description: 'GST percentage (0–100). Pass 0 or omit to remove GST.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  taxPercentage?: number;
+
+  @ApiPropertyOptional({
     type: [InvoiceItemDto],
     description:
       'Replace all line items. If provided, must contain at least one item. ' +
-      'totalAmount is recomputed from the new items.',
+      'subtotal/taxAmount/totalAmount are recomputed from the new items.',
   })
   @IsOptional()
   @IsArray()

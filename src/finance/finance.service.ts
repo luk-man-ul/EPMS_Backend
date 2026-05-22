@@ -58,16 +58,27 @@ function serializeLedgerEntry<T extends { amount: Prisma.Decimal }>(e: T): Omit<
 
 /**
  * Serialize an Invoice record — converts all monetary Decimal fields to number:
- * totalAmount, items[].quantity, items[].unitPrice, items[].total, revenue?.amount
+ * subtotal, taxPercentage, taxAmount, totalAmount,
+ * items[].quantity, items[].unitPrice, items[].total, revenue?.amount
  */
 function serializeInvoice<
   TItem extends { quantity: Prisma.Decimal; unitPrice: Prisma.Decimal; total: Prisma.Decimal },
   TRevenue extends { amount: Prisma.Decimal } | null | undefined,
-  T extends { totalAmount: Prisma.Decimal; items: TItem[]; revenue?: TRevenue },
+  T extends {
+    subtotal:      Prisma.Decimal | null;
+    taxPercentage: Prisma.Decimal | null;
+    taxAmount:     Prisma.Decimal | null;
+    totalAmount:   Prisma.Decimal;
+    items:         TItem[];
+    revenue?:      TRevenue;
+  },
 >(inv: T) {
   return {
     ...inv,
-    totalAmount: serializeDecimal(inv.totalAmount),
+    subtotal:      inv.subtotal      != null ? serializeDecimal(inv.subtotal)      : null,
+    taxPercentage: inv.taxPercentage != null ? serializeDecimal(inv.taxPercentage) : null,
+    taxAmount:     inv.taxAmount     != null ? serializeDecimal(inv.taxAmount)     : null,
+    totalAmount:   serializeDecimal(inv.totalAmount),
     items: inv.items.map((item) => ({
       ...item,
       quantity:  serializeDecimal(item.quantity),
@@ -729,11 +740,22 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
       }
     }
 
-    // DTO items are plain JS numbers from JSON — arithmetic is safe
-    const totalAmount = dto.items.reduce(
+    // ── GST computation using Prisma.Decimal to avoid float drift ────────────
+    // subtotal = sum(qty * unitPrice) — plain JS numbers from DTO, safe here
+    const subtotalNum = dto.items.reduce(
       (sum, item) => sum + item.quantity * item.unitPrice,
       0,
     );
+    const subtotal = new Prisma.Decimal(subtotalNum);
+
+    // taxPercentage: 0 or the provided value
+    const taxPct = new Prisma.Decimal(dto.taxPercentage ?? 0);
+
+    // taxAmount = subtotal * taxPercentage / 100  (Decimal arithmetic — no float drift)
+    const taxAmount = subtotal.mul(taxPct).div(100);
+
+    // totalAmount = subtotal + taxAmount
+    const totalAmount = subtotal.add(taxAmount);
 
     const invoice = await this.prisma.$transaction(async (tx) => {
       const invoiceNo = await this.generateInvoiceNo(tx, new Date().getFullYear());
@@ -749,6 +771,9 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
           dueDate:       new Date(dto.dueDate),
           notes:         dto.notes         ?? null,
           revenueId:     dto.revenueId     ?? null,
+          subtotal,
+          taxPercentage: taxPct.isZero() ? null : taxPct,
+          taxAmount:     taxPct.isZero() ? null : taxAmount,
           totalAmount,
           createdById:   userId,
           items: {
@@ -801,7 +826,7 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
   async updateInvoice(id: string, dto: UpdateInvoiceDto) {
     const existing = await this.prisma.invoice.findUnique({
       where: { id },
-      select: { id: true, status: true },
+      select: { id: true, status: true, subtotal: true, taxPercentage: true },
     });
     if (!existing) throw new NotFoundException('Invoice not found');
 
@@ -809,20 +834,40 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
       throw new BadRequestException('A PAID invoice cannot be modified');
     }
 
-    // DTO items are plain JS numbers from JSON — arithmetic is safe
-    let totalAmount: number | undefined;
-    if (dto.items && dto.items.length > 0) {
-      totalAmount = dto.items.reduce(
-        (sum, item) => sum + item.quantity * item.unitPrice,
-        0,
-      );
+    // ── Recompute GST totals when items or taxPercentage change ──────────────
+    // We need to recompute whenever either items OR taxPercentage is provided.
+    // If only one is provided, we use the stored value for the other.
+    let newSubtotal:      Prisma.Decimal | undefined;
+    let newTaxPercentage: Prisma.Decimal | undefined;
+    let newTaxAmount:     Prisma.Decimal | undefined;
+    let newTotalAmount:   Prisma.Decimal | undefined;
+
+    const itemsChanged = dto.items && dto.items.length > 0;
+    const taxChanged   = dto.taxPercentage !== undefined;
+
+    if (itemsChanged || taxChanged) {
+      // Subtotal: from new items if provided, else from stored value
+      const subtotalNum = itemsChanged
+        ? dto.items!.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
+        : existing.subtotal?.toNumber() ?? 0;
+
+      newSubtotal = new Prisma.Decimal(subtotalNum);
+
+      // Tax percentage: from DTO if provided, else from stored value (or 0)
+      const taxPctNum = taxChanged
+        ? (dto.taxPercentage ?? 0)
+        : existing.taxPercentage?.toNumber() ?? 0;
+
+      newTaxPercentage = new Prisma.Decimal(taxPctNum);
+      newTaxAmount     = newSubtotal.mul(newTaxPercentage).div(100);
+      newTotalAmount   = newSubtotal.add(newTaxAmount);
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      if (dto.items && dto.items.length > 0) {
+      if (itemsChanged) {
         await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
         await tx.invoiceItem.createMany({
-          data: dto.items.map((item) => ({
+          data: dto.items!.map((item) => ({
             invoiceId:   id,
             description: item.description,
             quantity:    item.quantity,
@@ -842,7 +887,15 @@ async createPaymentSource(dto: CreatePaymentSourceDto) {
           ...(dto.dueDate       !== undefined && { dueDate:       new Date(dto.dueDate) }),
           ...(dto.status        !== undefined && { status:        dto.status }),
           ...(dto.notes         !== undefined && { notes:         dto.notes }),
-          ...(totalAmount       !== undefined && { totalAmount }),
+          // Only write computed fields if we actually recalculated them
+          ...(newSubtotal      !== undefined && { subtotal:      newSubtotal }),
+          ...(newTaxPercentage !== undefined && {
+            taxPercentage: newTaxPercentage.isZero() ? null : newTaxPercentage,
+          }),
+          ...(newTaxAmount     !== undefined && {
+            taxAmount: newTaxPercentage!.isZero() ? null : newTaxAmount,
+          }),
+          ...(newTotalAmount   !== undefined && { totalAmount:   newTotalAmount }),
         },
         include: INVOICE_INCLUDE_FULL,
       });
