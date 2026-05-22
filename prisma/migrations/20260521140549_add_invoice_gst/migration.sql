@@ -5,7 +5,17 @@
 
 */
 -- CreateEnum
-CREATE TYPE "PaymentSourceType" AS ENUM ('BANK_ACCOUNT', 'CASH', 'UPI', 'PETTY_CASH', 'OTHER');
+DO $$
+BEGIN
+    CREATE TYPE "PaymentSourceType" AS ENUM (
+        'BANK_ACCOUNT',
+        'CASH',
+        'PETTY_CASH',
+        'OTHER'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- DropIndex
 DROP INDEX "BankAccount_accountNumber_key";
